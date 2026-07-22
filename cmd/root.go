@@ -11,6 +11,8 @@ var rootCmd = &cobra.Command{
 	Use:   "contour",
 	Short: "centralized context provider",
 	Long:  `contour is the centralized context provider for your AI agent`,
+	// Errors are reported by the commands themselves; don't append usage text.
+	SilenceUsage: true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
