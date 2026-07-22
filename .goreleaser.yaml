@@ -1,0 +1,82 @@
+# See https://goreleaser.com for documentation.
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+
+version: 2
+
+project_name: contour
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: contour
+    main: ./
+    binary: contour
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # -s -w strip debug info to keep the binary small.
+    # Version is read from the embedded go.yaml at run time, so no -X needed.
+    ldflags:
+      - -s -w
+
+archives:
+  - id: contour
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - changelog.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+brews:
+  - name: contour
+    repository:
+      owner: vieolo
+      name: homebrew-tap
+      branch: master
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/vieolo/contour"
+    description: "Centralized context provider for AI agents"
+    license: "MIT"
+    # Skip the brew push for snapshots and prereleases (e.g. v1.2.3-rc1).
+    skip_upload: auto
+    install: |
+      bin.install "contour"
+    test: |
+      system "#{bin}/contour", "version"
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ---
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).

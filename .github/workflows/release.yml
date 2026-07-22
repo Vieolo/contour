@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # Strict semver tags only: v1.2.3. Excludes v1.2.3-rc1 etc. by design.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  # Needed for goreleaser to create the GitHub Release in this repo.
+  contents: write
+
+jobs:
+  goreleaser:
+    name: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # goreleaser needs full history to build the changelog from commits.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          # Default token: enough to publish the release to vieolo/contour.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with write access to vieolo/homebrew-tap. See repo Settings → Secrets.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
