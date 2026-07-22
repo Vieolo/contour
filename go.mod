@@ -6,6 +6,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/vieolo/godotyaml v0.1.0
 	github.com/vieolo/termange v0.8.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -35,5 +36,4 @@ require (
 	golang.org/x/exp v0.0.0-20260508232706-74f9aab9d74a // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

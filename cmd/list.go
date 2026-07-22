@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"errors"
-	"io/fs"
-	"os"
-	"path/filepath"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/config"
@@ -13,24 +11,43 @@ import (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Show an overview of the contour store",
-	Long: "Show how many items of each kind the store currently holds.\n\n" +
-		"This overview is deliberately minimal; richer listing (descriptions " +
-		"and tags) arrives with the loader.",
+	Use:   "list [kind]",
+	Short: "List the items in the contour store",
+	Long: "List the store's items with their tags and descriptions. Optionally " +
+		"restrict to a single kind: rules, skills or knowledge.",
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home := resolveStore()
+		st, err := store.Load(home.Path)
+		if err != nil {
+			return err
+		}
+
+		kinds := store.Kinds
+		if len(args) == 1 {
+			k, err := parseKind(args[0])
+			if err != nil {
+				return err
+			}
+			kinds = []store.Kind{k}
+		}
 
 		if config.Dev {
 			termange.PrintWarningln(config.Label + " build — using the dev store")
 		}
-		termange.PrintInfof("contour store: %s\n\n", home.Path)
-		for _, k := range store.Kinds {
-			n, err := countItems(filepath.Join(home.Path, string(k)), k)
-			if err != nil {
-				return err
+		termange.PrintInfof("contour store: %s\n", home.Path)
+
+		for _, k := range kinds {
+			items := st.ByKind(k)
+			fmt.Println()
+			termange.PrintColorf(termange.ColorGreen, "%s (%d)\n", string(k), len(items))
+			if len(items) == 0 {
+				termange.PrintInfoln("  (none)")
+				continue
 			}
-			termange.PrintInfof("  %-10s %d\n", string(k), n)
+			for _, it := range items {
+				printItem(it)
+			}
 		}
 		return nil
 	},
@@ -40,33 +57,26 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 }
 
-// countItems counts the items under a kind directory: SKILL.md files for
-// skills, markdown files otherwise. A missing kind directory counts as zero.
-//
-// This is a stopgap until the loader lands and can report items with their
-// descriptions and tags.
-func countItems(dir string, kind store.Kind) (int, error) {
-	count := 0
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil // kind directory not created yet
-			}
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if kind == store.KindSkills {
-			if d.Name() == store.SkillFile {
-				count++
-			}
-			return nil
-		}
-		if filepath.Ext(d.Name()) == store.MarkdownExt {
-			count++
-		}
-		return nil
-	})
-	return count, err
+func printItem(it store.Item) {
+	termange.PrintInfof("  %s\n", it.ID)
+	if it.Description != "" {
+		termange.PrintInfof("      %s\n", it.Description)
+	}
+	if len(it.Tags) > 0 {
+		termange.PrintColorf(termange.ColorYellow, "      tags: %s\n", strings.Join(it.Tags, ", "))
+	}
+}
+
+// parseKind maps a user-supplied kind argument to a store.Kind.
+func parseKind(arg string) (store.Kind, error) {
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "rules", "rule":
+		return store.KindRules, nil
+	case "skills", "skill":
+		return store.KindSkills, nil
+	case "knowledge":
+		return store.KindKnowledge, nil
+	default:
+		return "", fmt.Errorf("unknown kind %q (want: rules, skills or knowledge)", arg)
+	}
 }
