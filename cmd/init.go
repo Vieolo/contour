@@ -64,7 +64,7 @@ func runInit(home config.Home) error {
 	if !home.Explicit {
 		termange.PrintInfof("Relocate it any time by setting %s to a new path.\n", config.EnvVar)
 	}
-	termange.PrintInfoln("Next: run `contour list` to see what's inside, or edit the samples under rules/.")
+	termange.PrintInfof("Next: run `%s list` to see what's inside, or edit the samples under rules/.\n", config.Program)
 	return nil
 }
 

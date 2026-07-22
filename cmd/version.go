@@ -4,6 +4,7 @@ import (
 	"bytes"
 
 	"github.com/spf13/cobra"
+	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/godotyaml"
 	"github.com/vieolo/termange"
 )
@@ -18,7 +19,11 @@ var versionCmd = &cobra.Command{
 	Long:  "Displays the version of contour",
 	Run: func(cmd *cobra.Command, args []string) {
 		doc, _ := godotyaml.Parse(bytes.NewReader(ThisGyByte))
-		termange.PrintInfof("v%s\n", doc.Version())
+		if config.Dev {
+			termange.PrintInfof("v%s+dev\n", doc.Version())
+		} else {
+			termange.PrintInfof("v%s\n", doc.Version())
+		}
 	},
 }
 

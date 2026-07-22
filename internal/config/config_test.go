@@ -53,7 +53,7 @@ func TestResolveDefaultFromHome(t *testing.T) {
 	if h.Explicit {
 		t.Error("Explicit = true, want false")
 	}
-	want := filepath.Join(home, defaultDirName)
+	want := filepath.Join(home, active.defaultDirName)
 	if h.Path != want {
 		t.Errorf("Path = %q, want %q", h.Path, want)
 	}

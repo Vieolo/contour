@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/termange"
 )
@@ -20,6 +21,9 @@ var listCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home := resolveStore()
 
+		if config.Dev {
+			termange.PrintWarningln(config.Label + " build — using the dev store")
+		}
 		termange.PrintInfof("contour store: %s\n\n", home.Path)
 		for _, k := range store.Kinds {
 			n, err := countItems(filepath.Join(home.Path, string(k)), k)

@@ -23,7 +23,7 @@ func resolveStore() config.Home {
 	if !home.Exists {
 		if home.Explicit {
 			termange.PrintErrorf("%s points to %q, but that directory does not exist.\n", config.EnvVar, home.Path)
-			termange.PrintErrorln("Create it, point " + config.EnvVar + " at your store, or run `contour init`.")
+			termange.PrintErrorf("Create it, point %s at your store, or run `%s init`.\n", config.EnvVar, config.Program)
 		} else {
 			printNoStoreBanner(home.Path)
 		}
@@ -50,10 +50,10 @@ func printNoStoreBanner(defaultPath string) {
 	termange.PrintInfoln("skills and knowledge that contour feeds to your AI agents.")
 	fmt.Println()
 	termange.PrintColorln("  Create it here", termange.ColorGreen)
-	termange.PrintInfoln("      contour init")
+	termange.PrintInfof("      %s init\n", config.Program)
 	fmt.Println()
 	termange.PrintColorln("  Put it somewhere else", termange.ColorGreen)
-	termange.PrintInfof("      set %s=/path/to/your/store, then run: contour init\n", config.EnvVar)
+	termange.PrintInfof("      set %s=/path/to/your/store, then run: %s init\n", config.EnvVar, config.Program)
 	fmt.Println()
 	termange.PrintColorln(rule, termange.ColorYellow)
 }
