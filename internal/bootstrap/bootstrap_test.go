@@ -22,7 +22,7 @@ func write(t *testing.T, root, rel, content string) {
 }
 
 // testRoot builds a store whose "go" profile exercises tag ordering and
-// de-duplication: 20-shared lives under go/ but is also tagged general, so it
+// de-duplication: 020-shared lives under go/ but is also tagged general, so it
 // matches both selected tags and must appear exactly once, in the general block.
 func testRoot(t *testing.T) string {
 	t.Helper()
@@ -36,10 +36,10 @@ func testRoot(t *testing.T) string {
 	write(t, root, "bootstrap/go-frontend.md",
 		"---\ndescription: Go plus frontend\nrules: [general, go]\n---\n")
 
-	write(t, root, "rules/general/10-comm.md", "---\ndescription: comm\n---\nBe concise.")
-	write(t, root, "rules/go/10-errors.md", "---\ndescription: errs\n---\nWrap errors.")
-	write(t, root, "rules/go/20-shared.md", "---\ndescription: shared\ntags: [general]\n---\nShared rule.")
-	write(t, root, "rules/js/10-style.md", "---\ndescription: style\n---\nUse prettier.")
+	write(t, root, "rules/general/010-comm.md", "---\ndescription: comm\n---\nBe concise.")
+	write(t, root, "rules/go/010-errors.md", "---\ndescription: errs\n---\nWrap errors.")
+	write(t, root, "rules/go/020-shared.md", "---\ndescription: shared\ntags: [general]\n---\nShared rule.")
+	write(t, root, "rules/js/010-style.md", "---\ndescription: style\n---\nUse prettier.")
 	write(t, root, "skills/go/release/SKILL.md", "---\ndescription: release\n---\nSteps")
 	write(t, root, "knowledge/general/stack.md", "---\ndescription: stack\n---\nGo + Postgres.")
 
@@ -120,9 +120,9 @@ func TestComposeOrderAndDedup(t *testing.T) {
 	for _, it := range c.Rules {
 		ids = append(ids, it.ID)
 	}
-	// general block first (10-comm, then 20-shared), then the go block adds
-	// 10-errors; 20-shared is not repeated and js is never selected.
-	want := []string{"rules/general/10-comm", "rules/go/20-shared", "rules/go/10-errors"}
+	// general block first (010-comm, then 020-shared), then the go block adds
+	// 010-errors; 020-shared is not repeated and js is never selected.
+	want := []string{"rules/general/010-comm", "rules/go/020-shared", "rules/go/010-errors"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Errorf("rule order = %v, want %v", ids, want)
 	}
@@ -159,9 +159,9 @@ func TestRender(t *testing.T) {
 	for _, want := range []string{
 		"Preamble text.",
 		"# Rules",
-		"## rules/general/10-comm",
+		"## rules/general/010-comm",
 		"Be concise.",
-		"## rules/go/10-errors",
+		"## rules/go/010-errors",
 		"# Available skills",
 		"- skills/go/release — release",
 		"# Available knowledge",
@@ -173,7 +173,7 @@ func TestRender(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(out, "rules/js/10-style") {
+	if strings.Contains(out, "rules/js/010-style") {
 		t.Error("Render included a rule the profile never selected")
 	}
 }

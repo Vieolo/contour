@@ -14,8 +14,8 @@ func seedFiles() []seedFile {
 	return []seedFile{
 		{"README.md", readmeSeed},
 		{"bootstrap/go.md", bootstrapGoSeed},
-		{"rules/general/10-communication.md", ruleCommunicationSeed},
-		{"rules/go/10-errors.md", ruleErrorsSeed},
+		{"rules/general/010-communication.md", ruleCommunicationSeed},
+		{"rules/go/010-errors.md", ruleErrorsSeed},
 		{"skills/general/write-commit-message/SKILL.md", skillCommitSeed},
 		{"skills/go/release/SKILL.md", skillReleaseSeed},
 		{"knowledge/general/stack.md", knowledgeStackSeed},
@@ -49,8 +49,10 @@ CONTOUR_HOME environment variable at it to keep it anywhere on disk.
       tags: [errors, style]
       ---
 
-- Ordering within a folder follows the filename. Prefix with numbers
-  (10-, 20-) when order matters.
+- Ordering within a folder follows the filename. Prefix with a three-digit
+  number (010-, 020-) when order matters. The gaps leave room to insert
+  entries later, and three digits keep the ordering correct past 99 files
+  in a folder, where 100- would otherwise sort before 20-.
 - A skill is any directory that contains a SKILL.md file.
 
 These sample files are just a starting point — edit or delete them freely.

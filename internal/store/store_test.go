@@ -22,9 +22,9 @@ func loadTestStore(t *testing.T) *Store {
 	t.Helper()
 	root := t.TempDir()
 
-	write(t, root, "rules/general/10-comm.md", "---\ndescription: comm\n---\nBe concise.")
-	write(t, root, "rules/go/10-errors.md", "---\ndescription: errs\ntags: [errors]\n---\nWrap errors.")
-	write(t, root, "rules/go/web/20-http.md", "No frontmatter here.")
+	write(t, root, "rules/general/010-comm.md", "---\ndescription: comm\n---\nBe concise.")
+	write(t, root, "rules/go/010-errors.md", "---\ndescription: errs\ntags: [errors]\n---\nWrap errors.")
+	write(t, root, "rules/go/web/020-http.md", "No frontmatter here.")
 	write(t, root, "rules/go/notes.txt", "not markdown, ignored")
 	write(t, root, "skills/go/release/SKILL.md", "---\ndescription: release\n---\n# Release\nsteps")
 	write(t, root, "skills/go/release/helper.md", "asset inside a skill, not a separate item")
@@ -54,9 +54,9 @@ func TestLoadCounts(t *testing.T) {
 func TestFrontmatterAndTags(t *testing.T) {
 	st := loadTestStore(t)
 
-	it, ok := st.Get("rules/go/10-errors")
+	it, ok := st.Get("rules/go/010-errors")
 	if !ok {
-		t.Fatal("missing rules/go/10-errors")
+		t.Fatal("missing rules/go/010-errors")
 	}
 	if it.Description != "errs" {
 		t.Errorf("description = %q, want errs", it.Description)
@@ -67,17 +67,17 @@ func TestFrontmatterAndTags(t *testing.T) {
 	if it.Body != "Wrap errors." {
 		t.Errorf("body = %q, want %q", it.Body, "Wrap errors.")
 	}
-	if it.Name != "10-errors" {
-		t.Errorf("name = %q, want 10-errors", it.Name)
+	if it.Name != "010-errors" {
+		t.Errorf("name = %q, want 010-errors", it.Name)
 	}
 }
 
 func TestNoFrontmatter(t *testing.T) {
 	st := loadTestStore(t)
 
-	it, ok := st.Get("rules/go/web/20-http")
+	it, ok := st.Get("rules/go/web/020-http")
 	if !ok {
-		t.Fatal("missing rules/go/web/20-http")
+		t.Fatal("missing rules/go/web/020-http")
 	}
 	if it.Description != "" {
 		t.Errorf("description = %q, want empty", it.Description)
@@ -126,7 +126,7 @@ func TestLoadOrdering(t *testing.T) {
 	for _, it := range st.ByKind(KindRules) {
 		ids = append(ids, it.ID)
 	}
-	want := []string{"rules/general/10-comm", "rules/go/10-errors", "rules/go/web/20-http"}
+	want := []string{"rules/general/010-comm", "rules/go/010-errors", "rules/go/web/020-http"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Errorf("rule order = %v, want %v", ids, want)
 	}

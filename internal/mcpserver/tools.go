@@ -15,7 +15,7 @@ type listInput struct {
 }
 
 type getInput struct {
-	ID string `json:"id" jsonschema:"the item's ID, for example rules/go/10-errors"`
+	ID string `json:"id" jsonschema:"the item's ID, for example rules/go/010-errors"`
 }
 
 type searchInput struct {
