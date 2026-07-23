@@ -23,7 +23,10 @@ var bootstrapCmd = &cobra.Command{
 		"so it can be piped straight into an agent.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		home := resolveStore()
+		home, err := resolveStore()
+		if err != nil {
+			return err
+		}
 
 		if len(args) == 0 {
 			return listProfiles(home.Path)

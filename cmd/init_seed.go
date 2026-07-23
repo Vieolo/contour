@@ -16,6 +16,7 @@ func seedFiles() []seedFile {
 		{"bootstrap/go.md", bootstrapGoSeed},
 		{"rules/general/10-communication.md", ruleCommunicationSeed},
 		{"rules/go/10-errors.md", ruleErrorsSeed},
+		{"skills/general/write-commit-message/SKILL.md", skillCommitSeed},
 		{"skills/go/release/SKILL.md", skillReleaseSeed},
 		{"knowledge/general/stack.md", knowledgeStackSeed},
 	}
@@ -83,6 +84,17 @@ tags: [errors]
 - Wrap errors with context using fmt.Errorf and %w.
 - Return errors rather than panicking in library code.
 - Keep error messages lower-case and free of trailing punctuation.
+`
+
+const skillCommitSeed = `---
+description: Write a clear commit message
+---
+
+# Commit message
+
+1. Summarise the change in one imperative line, under 72 characters.
+2. Leave a blank line, then explain why the change was needed.
+3. Reference the issue the change closes, if there is one.
 `
 
 const skillReleaseSeed = `---

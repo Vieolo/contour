@@ -18,14 +18,36 @@ var initCmd = &cobra.Command{
 	Long: "Create the contour store directory and its folder structure " +
 		"(bootstrap, rules, skills, knowledge), a README describing the " +
 		"convention, and a few sample files.\n\n" +
+		"Running this is optional: contour creates the store on first use when " +
+		"it is missing. The command exists for when you want to set the store " +
+		"up explicitly — notably at a path you have pointed the environment " +
+		"variable at.\n\n" +
 		"init is safe to re-run: it creates whatever is missing and never " +
 		"overwrites files you already have.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Resolve rather than resolveStore: init is the command that creates
+		// the store, so a missing directory is the normal case here — including
+		// at an explicitly configured path.
 		home, err := config.Resolve()
 		if err != nil {
 			return err
 		}
-		return runInit(home)
+		fresh := !home.Exists
+
+		if err := scaffoldStore(home.Path); err != nil {
+			return err
+		}
+
+		if fresh {
+			termange.PrintSuccessf("Created contour store at %s\n", home.Path)
+		} else {
+			termange.PrintSuccessf("Store ready at %s (existing files left untouched)\n", home.Path)
+		}
+		if !home.Explicit {
+			termange.PrintInfof("Relocate it any time by setting %s to a new path.\n", config.EnvVar)
+		}
+		termange.PrintInfof("Next: run `%s list` to see what's inside, or edit the samples under rules/.\n", config.Program)
+		return nil
 	},
 }
 
@@ -33,14 +55,16 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 }
 
-func runInit(home config.Home) error {
-	fresh := !home.Exists
-
-	// Ensure the root and every kind/bootstrap directory exists, so even a
-	// store with no seed files has the expected shape.
-	dirs := []string{home.Path, filepath.Join(home.Path, store.BootstrapDir)}
+// scaffoldStore creates the store's directory structure and sample files at
+// path. Every kind directory is created even when a sample does not land in it,
+// so the layout is discoverable from an empty store.
+//
+// It is safe to re-run: missing pieces are created and existing files are never
+// overwritten. Both `init` and first-use auto-creation go through here.
+func scaffoldStore(path string) error {
+	dirs := []string{path, filepath.Join(path, store.BootstrapDir)}
 	for _, k := range store.Kinds {
-		dirs = append(dirs, filepath.Join(home.Path, string(k)))
+		dirs = append(dirs, filepath.Join(path, string(k)))
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -48,23 +72,12 @@ func runInit(home config.Home) error {
 		}
 	}
 
-	// Write the sample files, leaving any that already exist untouched.
 	for _, f := range seedFiles() {
-		path := filepath.Join(home.Path, filepath.FromSlash(f.rel))
-		if err := writeIfAbsent(path, f.body); err != nil {
+		target := filepath.Join(path, filepath.FromSlash(f.rel))
+		if err := writeIfAbsent(target, f.body); err != nil {
 			return err
 		}
 	}
-
-	if fresh {
-		termange.PrintSuccessf("Created contour store at %s\n", home.Path)
-	} else {
-		termange.PrintSuccessf("Store ready at %s (existing files left untouched)\n", home.Path)
-	}
-	if !home.Explicit {
-		termange.PrintInfof("Relocate it any time by setting %s to a new path.\n", config.EnvVar)
-	}
-	termange.PrintInfof("Next: run `%s list` to see what's inside, or edit the samples under rules/.\n", config.Program)
 	return nil
 }
 

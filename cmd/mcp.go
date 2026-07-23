@@ -31,16 +31,11 @@ var mcpCmd = &cobra.Command{
 		"store through its tools, and says how to choose an entry point.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Resolve the store directly rather than through resolveStore: stdout
-		// carries the MCP protocol, so nothing else may be written there.
-		// Returning an error keeps the message on stderr.
-		home, err := config.Resolve()
+		// resolveStore writes any notice to stderr, so stdout stays free for
+		// the MCP protocol.
+		home, err := resolveStore()
 		if err != nil {
 			return err
-		}
-		if !home.Exists {
-			return fmt.Errorf("no contour store at %s (run `%s init`, or point %s at your store)",
-				home.Path, config.Program, config.EnvVar)
 		}
 
 		profile := mcpBootstrap

@@ -17,7 +17,10 @@ var listCmd = &cobra.Command{
 		"restrict to a single kind: rules, skills or knowledge.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		home := resolveStore()
+		home, err := resolveStore()
+		if err != nil {
+			return err
+		}
 		st, err := store.Load(home.Path)
 		if err != nil {
 			return err

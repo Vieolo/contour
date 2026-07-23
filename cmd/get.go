@@ -18,7 +18,10 @@ var getCmd = &cobra.Command{
 		"directly by an agent.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		home := resolveStore()
+		home, err := resolveStore()
+		if err != nil {
+			return err
+		}
 		st, err := store.Load(home.Path)
 		if err != nil {
 			return err
