@@ -30,6 +30,25 @@ func Load(root string) (*Store, error) {
 	return s, nil
 }
 
+// LoadForKind loads the store and resolves an optional kind filter. An empty
+// kind selects every kind, so a user-supplied value can be passed straight
+// through from either surface.
+func LoadForKind(root, kind string) (*Store, []Kind, error) {
+	st, err := Load(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(kind) == "" {
+		return st, Kinds, nil
+	}
+
+	k, err := ParseKind(kind)
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, []Kind{k}, nil
+}
+
 // Root returns the store's root directory.
 func (s *Store) Root() string { return s.root }
 
@@ -56,6 +75,17 @@ func (s *Store) Count(kind Kind) int {
 		}
 	}
 	return n
+}
+
+// Search returns the items of a kind matching query, in load order.
+func (s *Store) Search(kind Kind, query string) []Item {
+	var out []Item
+	for _, it := range s.ByKind(kind) {
+		if it.Matches(query) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // Get returns the item with the given ID.

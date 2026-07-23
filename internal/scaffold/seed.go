@@ -1,15 +1,15 @@
-package cmd
+package scaffold
 
-// seedFile is a file written by `contour init` to illustrate the store
+// seedFile is a sample file written into a new store to illustrate the
 // convention. Paths are slash-separated and relative to the store root.
 type seedFile struct {
 	rel  string
 	body string
 }
 
-// seedFiles returns the sample files init writes into a new store. They double
-// as documentation of the layout and as something for the read commands to
-// show before the user adds their own content.
+// seedFiles returns the sample files written into a new store. They double as
+// documentation of the layout and as something for the read commands to show
+// before the user adds their own content.
 func seedFiles() []seedFile {
 	return []seedFile{
 		{"README.md", readmeSeed},
@@ -32,7 +32,7 @@ CONTOUR_HOME environment variable at it to keep it anywhere on disk.
 
     bootstrap/   Named entry points. Each profile selects, by tag, which
                  rules load eagerly and which skills/knowledge are exposed
-                 on demand for a kind of project (e.g. a Go backend).
+                 on demand for a kind of project (e.g. a Python backend).
     rules/       Imperative "how to behave" guidance. Loaded eagerly.
     skills/      Procedural "how to do X". Fetched on demand.
     knowledge/   Reference facts. Fetched on demand.

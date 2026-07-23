@@ -48,15 +48,23 @@ var mcpCmd = &cobra.Command{
 				config.Label, home.Path, profile)
 		}
 
-		// Shut down cleanly when the host stops us.
-		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-
-		return mcpserver.Run(ctx, mcpserver.Options{
+		server, err := mcpserver.New(mcpserver.Options{
 			Root:    home.Path,
 			Profile: profile,
 			Version: cliVersion(),
 		})
+		if err != nil {
+			return err
+		}
+		// Every dual-surface command registers itself; nothing is listed here,
+		// so a new command cannot be forgotten.
+		registerMCPTools(server)
+
+		// Shut down cleanly when the host stops us.
+		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		return mcpserver.Serve(ctx, server)
 	},
 }
 
