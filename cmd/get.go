@@ -13,7 +13,7 @@ var getCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Print a single item's content",
 	Long: "Print the body of one item, identified by the ID shown in " +
-		"`contour list` — for example: contour get rules/go/errors\n\n" +
+		"`contour list` — for example: contour get rules/python/errors\n\n" +
 		"Only the body is written to stdout, so it can be piped or captured " +
 		"directly by an agent.",
 	Args: cobra.ExactArgs(1),

@@ -22,7 +22,7 @@ import (
 // store's bootstrap/ directory. Its frontmatter holds the tag selections; its
 // body is an optional preamble emitted ahead of the rules.
 type Profile struct {
-	// Name is the profile's filename without the extension (e.g. "go").
+	// Name is the profile's filename without the extension (e.g. "python").
 	Name string
 
 	// Path is the absolute path to the profile file.
@@ -78,8 +78,8 @@ func LoadProfiles(root string) ([]Profile, error) {
 		profiles = append(profiles, p)
 	}
 
-	// ReadDir orders by filename, which would put "go-frontend" before "go"
-	// ('-' sorts before '.'). Order by profile name instead.
+	// ReadDir orders by filename, which would put "python-frontend" before
+	// "python" ('-' sorts before '.'). Order by profile name instead.
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
 	return profiles, nil
 }

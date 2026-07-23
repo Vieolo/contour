@@ -13,11 +13,11 @@ type seedFile struct {
 func seedFiles() []seedFile {
 	return []seedFile{
 		{"README.md", readmeSeed},
-		{"bootstrap/go.md", bootstrapGoSeed},
+		{"bootstrap/python.md", bootstrapPythonSeed},
 		{"rules/general/010-communication.md", ruleCommunicationSeed},
-		{"rules/go/010-errors.md", ruleErrorsSeed},
+		{"rules/python/010-errors.md", ruleErrorsSeed},
 		{"skills/general/write-commit-message/SKILL.md", skillCommitSeed},
-		{"skills/go/release/SKILL.md", skillReleaseSeed},
+		{"skills/python/release/SKILL.md", skillReleaseSeed},
 		{"knowledge/general/stack.md", knowledgeStackSeed},
 	}
 }
@@ -40,12 +40,12 @@ CONTOUR_HOME environment variable at it to keep it anywhere on disk.
 ## Conventions
 
 - Folder names under rules/, skills/ and knowledge/ become implicit tags on
-  the files beneath them. rules/go/errors.md is tagged "go".
+  the files beneath them. rules/python/errors.md is tagged "python".
 - Files may start with optional YAML frontmatter for a description and extra
   tags:
 
       ---
-      description: How we handle errors in Go
+      description: How we handle errors in Python
       tags: [errors, style]
       ---
 
@@ -58,15 +58,15 @@ CONTOUR_HOME environment variable at it to keep it anywhere on disk.
 These sample files are just a starting point — edit or delete them freely.
 `
 
-const bootstrapGoSeed = `---
-description: Go backend projects
-rules: [general, go]
-skills: [general, go]
-knowledge: [general, go]
+const bootstrapPythonSeed = `---
+description: Python backend projects
+rules: [general, python]
+skills: [general, python]
+knowledge: [general, python]
 ---
 
-Entry point for Go backend projects. Rules tagged "general" and "go" are
-loaded eagerly; skills and knowledge with those tags are offered on demand.
+Entry point for Python backend projects. Rules tagged "general" and "python"
+are loaded eagerly; skills and knowledge with those tags are offered on demand.
 `
 
 const ruleCommunicationSeed = `---
@@ -79,13 +79,13 @@ description: How the agent should communicate
 `
 
 const ruleErrorsSeed = `---
-description: Error handling in Go
+description: Error handling in Python
 tags: [errors]
 ---
 
-- Wrap errors with context using fmt.Errorf and %w.
-- Return errors rather than panicking in library code.
-- Keep error messages lower-case and free of trailing punctuation.
+- Raise a specific exception type; never raise or catch a bare Exception.
+- Chain with "raise WrappedError(...) from err" so the original traceback survives.
+- Keep try blocks narrow: wrap only the call that can actually fail.
 `
 
 const skillCommitSeed = `---
@@ -100,14 +100,15 @@ description: Write a clear commit message
 `
 
 const skillReleaseSeed = `---
-description: Cut a tagged release of a Go module
+description: Cut a tagged release of a Python package
 ---
 
 # Release
 
 1. Update the changelog.
-2. Tag the commit with a semver tag (vX.Y.Z).
-3. Push the tag to trigger the release workflow.
+2. Bump the version in pyproject.toml.
+3. Tag the commit with a semver tag (vX.Y.Z).
+4. Push the tag to trigger the release workflow.
 `
 
 const knowledgeStackSeed = `---

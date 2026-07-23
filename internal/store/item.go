@@ -8,8 +8,8 @@ type Item struct {
 	Kind Kind
 
 	// ID is the item's stable identifier: its path relative to the store root,
-	// slash-separated and without the file extension (e.g. "rules/go/errors").
-	// For skills it is the skill directory's path (e.g. "skills/go/release").
+	// slash-separated and without the file extension (e.g. "rules/python/errors").
+	// For skills it is the skill directory's path (e.g. "skills/python/release").
 	ID string
 
 	// Name is the last segment of the ID (e.g. "errors", "release").

@@ -73,6 +73,6 @@ const storeLayoutHelp = `Layout:
     knowledge/   Reference facts. Fetched on demand.
 
 Folder names under rules/, skills/ and knowledge/ become implicit tags, so a
-file at rules/go/errors.md is tagged "go". Sample files are included — edit
-or delete them freely; README.md in the store explains the conventions.
+file at rules/python/errors.md is tagged "python". Sample files are included;
+edit or delete them freely, and see README.md in the store for the conventions.
 `
