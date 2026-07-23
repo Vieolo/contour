@@ -3,7 +3,7 @@ package store
 import "testing"
 
 func TestSplitFrontmatter(t *testing.T) {
-	fm, body, ok := splitFrontmatter([]byte("---\ndescription: x\n---\nbody line"))
+	fm, body, ok := SplitFrontmatter([]byte("---\ndescription: x\n---\nbody line"))
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
@@ -16,7 +16,7 @@ func TestSplitFrontmatter(t *testing.T) {
 }
 
 func TestSplitFrontmatterNone(t *testing.T) {
-	_, body, ok := splitFrontmatter([]byte("no frontmatter\nsecond line"))
+	_, body, ok := SplitFrontmatter([]byte("no frontmatter\nsecond line"))
 	if ok {
 		t.Error("ok = true, want false")
 	}
@@ -26,7 +26,7 @@ func TestSplitFrontmatterNone(t *testing.T) {
 }
 
 func TestSplitFrontmatterUnterminated(t *testing.T) {
-	if _, _, ok := splitFrontmatter([]byte("---\ndescription: x\nno close")); ok {
+	if _, _, ok := SplitFrontmatter([]byte("---\ndescription: x\nno close")); ok {
 		t.Error("ok = true for unterminated frontmatter, want false")
 	}
 }

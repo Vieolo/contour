@@ -14,11 +14,14 @@ type frontmatter struct {
 	Tags        []string `yaml:"tags"`
 }
 
-// splitFrontmatter separates an optional leading YAML frontmatter block —
+// SplitFrontmatter separates an optional leading YAML frontmatter block —
 // delimited by lines containing only "---" — from the body that follows. When
 // no valid (opened and closed) frontmatter is present, the whole content is
 // returned as the body and ok is false.
-func splitFrontmatter(content []byte) (fm string, body string, ok bool) {
+//
+// It is exported so other packages — bootstrap profiles, for instance — can
+// reuse the same file convention with their own metadata schema.
+func SplitFrontmatter(content []byte) (fm string, body string, ok bool) {
 	lines := strings.Split(string(content), "\n")
 	if len(lines) == 0 || strings.TrimRight(lines[0], " \t\r") != FrontmatterDelim {
 		return "", string(content), false
@@ -34,7 +37,7 @@ func splitFrontmatter(content []byte) (fm string, body string, ok bool) {
 
 // parseItemFile splits an item file into its metadata and trimmed body.
 func parseItemFile(content []byte) (frontmatter, string, error) {
-	fmText, body, ok := splitFrontmatter(content)
+	fmText, body, ok := SplitFrontmatter(content)
 
 	var fm frontmatter
 	if ok {
