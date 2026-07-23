@@ -8,6 +8,7 @@ package render
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/vieolo/contour/internal/config"
@@ -42,6 +43,42 @@ func NoMatches(query string) {
 	fmt.Println()
 	termange.PrintWarningf("No items match %q.\n", query)
 }
+
+// StoreCreated reports that contour set up the store, and explains how its
+// layout works. First run is the one moment the user is guaranteed to see this,
+// so it teaches the structure rather than just naming the path.
+//
+// Unlike the rest of this package it writes to stderr: commands such as get and
+// bootstrap emit a payload on stdout that a banner would corrupt.
+func StoreCreated(path string) {
+	rule := termange.PaintText(strings.Repeat("─", 64), termange.ColorYellow)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n%s\n%s\n\n", rule,
+		termange.PaintText("  contour — store created", termange.ColorYellow), rule)
+	fmt.Fprintf(&b, "No store existed yet, so contour created one for you at:\n\n    %s\n\n",
+		termange.PaintText(path, termange.ColorGreen))
+	b.WriteString(storeLayoutHelp)
+	fmt.Fprintf(&b, "\n%s\n    move the directory, then set %s to its new path\n\n",
+		termange.PaintText("  To keep the store somewhere else", termange.ColorGreen), config.EnvVar)
+	fmt.Fprintf(&b, "%s\n", rule)
+
+	fmt.Fprint(os.Stderr, b.String())
+}
+
+const storeLayoutHelp = `Layout:
+
+    bootstrap/   Named entry points. Each profile selects, by tag, which
+                 rules load eagerly and which skills and knowledge are
+                 offered on demand.
+    rules/       Imperative "how to behave" guidance. Loaded eagerly.
+    skills/      Procedural "how to do X". Fetched on demand.
+    knowledge/   Reference facts. Fetched on demand.
+
+Folder names under rules/, skills/ and knowledge/ become implicit tags, so a
+file at rules/python/errors.md is tagged "python". Sample files are included;
+edit or delete them freely, and see README.md in the store for the conventions.
+`
 
 // item renders a single item: ID, description and tags.
 func item(it store.Item) {
