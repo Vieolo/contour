@@ -25,7 +25,7 @@ var listCmd = &cobra.Command{
 
 		kinds := store.Kinds
 		if len(args) == 1 {
-			k, err := parseKind(args[0])
+			k, err := store.ParseKind(args[0])
 			if err != nil {
 				return err
 			}
@@ -64,19 +64,5 @@ func printItem(it store.Item) {
 	}
 	if len(it.Tags) > 0 {
 		termange.PrintColorf(termange.ColorYellow, "      tags: %s\n", strings.Join(it.Tags, ", "))
-	}
-}
-
-// parseKind maps a user-supplied kind argument to a store.Kind.
-func parseKind(arg string) (store.Kind, error) {
-	switch strings.ToLower(strings.TrimSpace(arg)) {
-	case "rules", "rule":
-		return store.KindRules, nil
-	case "skills", "skill":
-		return store.KindSkills, nil
-	case "knowledge":
-		return store.KindKnowledge, nil
-	default:
-		return "", fmt.Errorf("unknown kind %q (want: rules, skills or knowledge)", arg)
 	}
 }

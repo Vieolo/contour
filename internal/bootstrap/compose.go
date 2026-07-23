@@ -143,3 +143,13 @@ func writeMenu(b *strings.Builder, title string, items []store.Item, fetchHint s
 	}
 	b.WriteString("\n")
 }
+
+// RenderMenu renders a standalone progressive-disclosure menu for a set of
+// items, in the same format Render uses. The MCP tools render through here so
+// their output matches the bootstrap payload. An empty item list renders as the
+// empty string.
+func RenderMenu(title string, items []store.Item, fetchHint string) string {
+	var b strings.Builder
+	writeMenu(&b, title, items, fetchHint)
+	return b.String()
+}

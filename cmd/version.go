@@ -18,15 +18,22 @@ var versionCmd = &cobra.Command{
 	Short: "Displays the version of contour",
 	Long:  "Displays the version of contour",
 	Run: func(cmd *cobra.Command, args []string) {
-		doc, _ := godotyaml.Parse(bytes.NewReader(ThisGyByte))
-		if config.Dev {
-			termange.PrintInfof("v%s+dev\n", doc.Version())
-		} else {
-			termange.PrintInfof("v%s\n", doc.Version())
-		}
+		termange.PrintInfof("v%s\n", cliVersion())
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
+}
+
+// cliVersion returns the version from the embedded go.yaml, marked for
+// development builds. The MCP server reports the same value to its clients.
+func cliVersion() string {
+	doc, _ := godotyaml.Parse(bytes.NewReader(ThisGyByte))
+
+	v := doc.Version()
+	if config.Dev {
+		return v + "+dev"
+	}
+	return v
 }

@@ -6,6 +6,11 @@
 // contract has a single source of truth.
 package store
 
+import (
+	"fmt"
+	"strings"
+)
+
 // Kind is a category of item in the store. Each Kind is also the name of a
 // top-level directory under the store root.
 type Kind string
@@ -36,3 +41,19 @@ const (
 	// of an item or profile file.
 	FrontmatterDelim = "---"
 )
+
+// ParseKind maps a user-supplied kind name to a Kind, accepting the singular
+// form too. It backs both the CLI's kind argument and the MCP tools' kind
+// parameter so the two accept exactly the same values.
+func ParseKind(name string) (Kind, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "rules", "rule":
+		return KindRules, nil
+	case "skills", "skill":
+		return KindSkills, nil
+	case "knowledge":
+		return KindKnowledge, nil
+	default:
+		return "", fmt.Errorf("unknown kind %q (want: rules, skills or knowledge)", name)
+	}
+}
