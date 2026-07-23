@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/mcpserver"
+	"github.com/vieolo/contour/internal/render"
 	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/contour/internal/unic"
 )
@@ -40,9 +41,9 @@ var listCmd = unic.UniversalCommand[listInput, any]{
 			return err
 		}
 
-		printStoreHeader(home.Path)
+		render.StoreHeader(home.Path)
 		for _, k := range kinds {
-			printKindSection(k, st.ByKind(k))
+			render.KindSection(k, st.ByKind(k))
 		}
 		return nil
 	},

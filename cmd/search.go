@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/mcpserver"
+	"github.com/vieolo/contour/internal/render"
 	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/contour/internal/unic"
-	"github.com/vieolo/termange"
 )
 
 type searchInput struct {
@@ -44,16 +44,15 @@ var searchCmd = unic.UniversalCommand[searchInput, any]{
 			return err
 		}
 
-		printStoreHeader(home.Path)
+		render.StoreHeader(home.Path)
 		found := 0
 		for _, k := range kinds {
 			hits := st.Search(k, args[0])
 			found += len(hits)
-			printKindSection(k, hits)
+			render.KindSection(k, hits)
 		}
 		if found == 0 {
-			fmt.Println()
-			termange.PrintWarningf("No items match %q.\n", args[0])
+			render.NoMatches(args[0])
 		}
 		return nil
 	},
