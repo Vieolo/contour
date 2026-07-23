@@ -1,5 +1,7 @@
 package store
 
+import "strings"
+
 // Item is a single unit of content in the store: one rule, skill or knowledge
 // entry. Items are produced by Load and served to agents through the CLI and
 // the MCP server.
@@ -36,6 +38,27 @@ type Item struct {
 func (it Item) HasTag(tag string) bool {
 	for _, t := range it.Tags {
 		if t == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// Matches reports whether the item satisfies a case-insensitive query across
+// its ID, description, tags and body. An empty query matches every item.
+func (it Item) Matches(query string) bool {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return true
+	}
+
+	if strings.Contains(strings.ToLower(it.ID), q) ||
+		strings.Contains(strings.ToLower(it.Description), q) ||
+		strings.Contains(strings.ToLower(it.Body), q) {
+		return true
+	}
+	for _, t := range it.Tags {
+		if strings.Contains(strings.ToLower(t), q) {
 			return true
 		}
 	}

@@ -1,10 +1,10 @@
-// Package mcpserver exposes a contour store to an MCP client over stdio.
+// Package mcpserver builds and runs the MCP server that exposes a contour store
+// to a client over stdio.
 //
-// It mirrors the CLI's progressive disclosure. The selected bootstrap profile's
-// rules are delivered eagerly in the server's initialisation instructions, while
-// skills and knowledge stay one tool call away via list, search and get. That
-// keeps a session's starting context small without putting the store out of
-// reach.
+// It owns the server's lifetime and its initialisation instructions — the eager
+// bootstrap payload — but not the tools. Those are defined alongside their CLI
+// counterparts under cmd/ and attached by the caller, so a command's two
+// surfaces live in one file.
 package mcpserver
 
 import (
@@ -36,38 +36,54 @@ type Options struct {
 	Version string
 }
 
-// Run serves the store over stdio, blocking until the client disconnects or ctx
-// is cancelled.
-//
-// Nothing may be written to stdout but protocol traffic; callers must send
-// their diagnostics to stderr.
-func Run(ctx context.Context, opts Options) error {
-	instructions, err := buildInstructions(opts)
+// New builds the server with the bootstrap payload as its initialisation
+// instructions. The caller registers tools before serving.
+func New(opts Options) (*mcp.Server, error) {
+	instructions, err := BuildInstructions(opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	server := mcp.NewServer(&mcp.Implementation{
+	return mcp.NewServer(&mcp.Implementation{
 		Name:    "contour",
 		Title:   "contour context provider",
 		Version: opts.Version,
 	}, &mcp.ServerOptions{
 		Instructions: instructions,
-	})
-	registerTools(server, opts.Root)
+	}), nil
+}
 
-	// A client closing the pipe, or a signal cancelling ctx, is an ordinary
-	// shutdown rather than a failure worth reporting to the user.
-	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil &&
+// Serve runs the server on stdio, blocking until the client disconnects or ctx
+// is cancelled.
+//
+// A client closing the pipe, or a signal cancelling ctx, is an ordinary
+// shutdown rather than a failure worth reporting to the user.
+//
+// Nothing may be written to stdout but protocol traffic; callers must send
+// their diagnostics to stderr.
+func Serve(ctx context.Context, s *mcp.Server) error {
+	if err := s.Run(ctx, &mcp.StdioTransport{}); err != nil &&
 		!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
 }
 
-// buildInstructions composes what the client receives at initialisation: a short
+// TextResult wraps text as tool output, substituting fallback when it is empty
+// so the model never receives a blank response.
+func TextResult(text, fallback string) *mcp.CallToolResult {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		text = fallback
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: text}},
+	}
+}
+
+// BuildInstructions composes what the client receives at initialisation: a short
 // preamble, the profile's eager rules, and menus of what can be fetched.
-func buildInstructions(opts Options) (string, error) {
+func BuildInstructions(opts Options) (string, error) {
 	st, err := store.Load(opts.Root)
 	if err != nil {
 		return "", err

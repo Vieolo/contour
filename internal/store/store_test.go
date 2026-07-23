@@ -20,6 +20,23 @@ func write(t *testing.T, root, rel, content string) {
 
 func loadTestStore(t *testing.T) *Store {
 	t.Helper()
+	st, err := Load(testStoreRoot(t))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return st
+}
+
+func ids(items []Item) []string {
+	var out []string
+	for _, it := range items {
+		out = append(out, it.ID)
+	}
+	return out
+}
+
+func testStoreRoot(t *testing.T) string {
+	t.Helper()
 	root := t.TempDir()
 
 	write(t, root, "rules/general/010-comm.md", "---\ndescription: comm\n---\nBe concise.")
@@ -31,11 +48,7 @@ func loadTestStore(t *testing.T) *Store {
 	write(t, root, "skills/deploy/SKILL.md", "# Deploy")
 	write(t, root, "knowledge/general/stack.md", "---\ndescription: stack\n---\nGo + Postgres.")
 
-	st, err := Load(root)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	return st
+	return root
 }
 
 func TestLoadCounts(t *testing.T) {
@@ -129,6 +142,66 @@ func TestLoadOrdering(t *testing.T) {
 	want := []string{"rules/general/010-comm", "rules/python/010-errors", "rules/python/web/020-http"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Errorf("rule order = %v, want %v", ids, want)
+	}
+}
+
+func TestItemMatches(t *testing.T) {
+	st := loadTestStore(t)
+
+	it, ok := st.Get("rules/python/010-errors")
+	if !ok {
+		t.Fatal("missing rules/python/010-errors")
+	}
+
+	// Empty query matches everything; the rest hit the ID, description, tags
+	// and body in turn, case-insensitively.
+	for _, q := range []string{"", "ERRORS", "errs", "wrap errors", "python", "010-err"} {
+		if !it.Matches(q) {
+			t.Errorf("Matches(%q) = false, want true", q)
+		}
+	}
+	if it.Matches("nonexistent-token") {
+		t.Error(`Matches("nonexistent-token") = true, want false`)
+	}
+}
+
+func TestStoreSearch(t *testing.T) {
+	st := loadTestStore(t)
+
+	hits := st.Search(KindRules, "concise")
+	if len(hits) != 1 || hits[0].ID != "rules/general/010-comm" {
+		t.Errorf("Search(rules, concise) = %v, want [rules/general/010-comm]", ids(hits))
+	}
+	if got := st.Search(KindSkills, "concise"); len(got) != 0 {
+		t.Errorf("Search(skills, concise) = %v, want none", ids(got))
+	}
+	if got := st.Search(KindRules, ""); len(got) != 3 {
+		t.Errorf("Search(rules, empty) returned %d items, want 3", len(got))
+	}
+}
+
+func TestLoadForKind(t *testing.T) {
+	root := testStoreRoot(t)
+
+	_, kinds, err := LoadForKind(root, "")
+	if err != nil {
+		t.Fatalf("LoadForKind(all): %v", err)
+	}
+	if !reflect.DeepEqual(kinds, Kinds) {
+		t.Errorf("kinds = %v, want %v", kinds, Kinds)
+	}
+
+	// Values arrive straight from a user, so trimming and case are handled.
+	_, kinds, err = LoadForKind(root, "  Skills ")
+	if err != nil {
+		t.Fatalf("LoadForKind(skills): %v", err)
+	}
+	if want := []Kind{KindSkills}; !reflect.DeepEqual(kinds, want) {
+		t.Errorf("kinds = %v, want %v", kinds, want)
+	}
+
+	if _, _, err := LoadForKind(root, "bogus"); err == nil {
+		t.Error("LoadForKind(bogus) returned a nil error")
 	}
 }
 
