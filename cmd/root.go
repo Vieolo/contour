@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/render"
@@ -21,29 +20,19 @@ var rootCmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
-// dualCommands holds the commands that expose both a CLI and an MCP surface, in
-// registration order.
-var dualCommands []unic.Command
+var mcpCommands []unic.Command
 
-// addCommand wires a dual-surface command into both surfaces at once: the cobra
-// tree immediately, and the MCP server when `contour mcp` builds one. Commands
-// call it from their init, so adding a command cannot leave one surface behind.
+// Adds a command to:
+//  1. cobra's rootCmd, immediately
+//  2. mcp server, when the MCP server is started
 //
-// CLI-only commands (init, version, seed, nuke, …) skip this and call
-// rootCmd.AddCommand directly.
+// This function is used for dual-use commands (such as `list`)
+// and CLI-only commands don't use this (such as `nuke`)
 func addCommand(c unic.Command) {
 	if cli := c.GetCLIConfig(); cli != nil {
 		rootCmd.AddCommand(cli)
 	}
-	dualCommands = append(dualCommands, c)
-}
-
-// registerMCPTools attaches every dual-surface command's tool to the server.
-// Commands without an MCP handler register nothing.
-func registerMCPTools(s *mcp.Server) {
-	for _, c := range dualCommands {
-		c.RegisterMCPTool(s)
-	}
+	mcpCommands = append(mcpCommands, c)
 }
 
 // resolveStore locates the contour store for commands that read from it.

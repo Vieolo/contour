@@ -56,9 +56,13 @@ var mcpCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		// Every dual-surface command registers itself; nothing is listed here,
-		// so a new command cannot be forgotten.
-		registerMCPTools(server)
+
+		// Registering the dual-usage commands from `mcpCommands`
+		// The commands are automatically added to `mcpCommands` via
+		// the `addCommand` function triggered in their `init` function
+		for _, c := range mcpCommands {
+			c.RegisterMCPTool(server)
+		}
 
 		// Shut down cleanly when the host stops us.
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
