@@ -59,8 +59,8 @@ func StoreCreated(path string) {
 	fmt.Fprintf(&b, "No store existed yet, so contour created one for you at:\n\n    %s\n\n",
 		termange.PaintText(path, termange.ColorGreen))
 	b.WriteString(storeLayoutHelp)
-	fmt.Fprintf(&b, "\n%s\n    move the directory, then set %s to its new path\n\n",
-		termange.PaintText("  To keep the store somewhere else", termange.ColorGreen), config.EnvVar)
+	fmt.Fprintf(&b, "\n%s\n    %s set-home /path/to/store\n\n",
+		termange.PaintText("  To keep the store somewhere else", termange.ColorGreen), config.Program)
 	fmt.Fprintf(&b, "%s\n", rule)
 
 	fmt.Fprint(os.Stderr, b.String())

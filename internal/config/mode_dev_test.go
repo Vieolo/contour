@@ -17,7 +17,11 @@ func TestActiveProfileIsDevelopment(t *testing.T) {
 	if Program != "contour-dev" {
 		t.Errorf("Program = %q, want contour-dev", Program)
 	}
-	if active.defaultDirName != ".contour-dev" {
-		t.Errorf("defaultDirName = %q, want .contour-dev", active.defaultDirName)
+	if active.defaultDirName != "contour-dev" {
+		t.Errorf("defaultDirName = %q, want contour-dev", active.defaultDirName)
+	}
+	// A separate config file keeps a dev build from ever repointing production.
+	if active.configFileName != "config-dev.yaml" {
+		t.Errorf("configFileName = %q, want config-dev.yaml", active.configFileName)
 	}
 }

@@ -17,7 +17,10 @@ func TestActiveProfileIsProduction(t *testing.T) {
 	if Program != "contour" {
 		t.Errorf("Program = %q, want contour", Program)
 	}
-	if active.defaultDirName != ".contour" {
-		t.Errorf("defaultDirName = %q, want .contour", active.defaultDirName)
+	if active.defaultDirName != "contour" {
+		t.Errorf("defaultDirName = %q, want contour", active.defaultDirName)
+	}
+	if active.configFileName != "config.yaml" {
+		t.Errorf("configFileName = %q, want config.yaml", active.configFileName)
 	}
 }

@@ -1,33 +1,129 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestResolveExplicitExisting(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv(EnvVar, dir)
+// isolate points HOME at a fresh temp directory and clears the store override,
+// so a test never reads or writes the developer's real store or config file.
+// Both the default store (~/contour) and the config directory (~/.contour) hang
+// off HOME, so that one lever isolates everything.
+func isolate(t *testing.T) (home string) {
+	t.Helper()
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(EnvVar, "")
+	return home
+}
+
+func TestResolveDefault(t *testing.T) {
+	home := isolate(t)
 
 	h, err := Resolve()
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	if want := filepath.Join(home, active.defaultDirName); h.Path != want {
+		t.Errorf("Path = %q, want %q", h.Path, want)
+	}
+	if h.Source != SourceDefault {
+		t.Errorf("Source = %q, want %q", h.Source, SourceDefault)
+	}
+	if h.Explicit {
+		t.Error("Explicit = true, want false for the default location")
+	}
+	if h.Exists {
+		t.Error("Exists = true, want false (resolving must not create anything)")
+	}
+}
+
+func TestResolveFromConfigFile(t *testing.T) {
+	isolate(t)
+	store := t.TempDir()
+
+	gotPath, configFile, err := SetStorePath(store)
+	if err != nil {
+		t.Fatalf("SetStorePath: %v", err)
+	}
+	if gotPath != store {
+		t.Errorf("stored path = %q, want %q", gotPath, store)
+	}
+
+	h, err := Resolve()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if h.Path != store {
+		t.Errorf("Path = %q, want %q", h.Path, store)
+	}
+	if h.Source != SourceConfig {
+		t.Errorf("Source = %q, want %q", h.Source, SourceConfig)
+	}
 	if !h.Explicit {
-		t.Error("Explicit = false, want true")
+		t.Error("Explicit = false, want true for a configured location")
 	}
 	if !h.Exists {
 		t.Error("Exists = false, want true")
 	}
-	if h.Path != dir {
-		t.Errorf("Path = %q, want %q", h.Path, dir)
+
+	// The whole point of the config file: moving the store must not carry the
+	// pointer away with it.
+	if strings.HasPrefix(configFile, store+string(filepath.Separator)) {
+		t.Errorf("config file %q lives inside the store %q", configFile, store)
+	}
+}
+
+func TestEnvOverridesConfigFile(t *testing.T) {
+	isolate(t)
+	configured := t.TempDir()
+	override := t.TempDir()
+
+	if _, _, err := SetStorePath(configured); err != nil {
+		t.Fatalf("SetStorePath: %v", err)
+	}
+	t.Setenv(EnvVar, override)
+
+	h, err := Resolve()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if h.Path != override {
+		t.Errorf("Path = %q, want the environment override %q", h.Path, override)
+	}
+	if h.Source != SourceEnv {
+		t.Errorf("Source = %q, want %q", h.Source, SourceEnv)
+	}
+	if got := EnvOverride(); got != override {
+		t.Errorf("EnvOverride() = %q, want %q", got, override)
+	}
+}
+
+func TestSetStorePathReplacesPrevious(t *testing.T) {
+	isolate(t)
+	first, second := t.TempDir(), t.TempDir()
+
+	if _, _, err := SetStorePath(first); err != nil {
+		t.Fatalf("SetStorePath(first): %v", err)
+	}
+	if _, _, err := SetStorePath(second); err != nil {
+		t.Fatalf("SetStorePath(second): %v", err)
+	}
+
+	h, err := Resolve()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if h.Path != second {
+		t.Errorf("Path = %q, want %q", h.Path, second)
 	}
 }
 
 func TestResolveExplicitMissing(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "nope")
-	t.Setenv(EnvVar, dir)
+	isolate(t)
+	missing := filepath.Join(t.TempDir(), "nope")
+	t.Setenv(EnvVar, missing)
 
 	h, err := Resolve()
 	if err != nil {
@@ -41,54 +137,21 @@ func TestResolveExplicitMissing(t *testing.T) {
 	}
 }
 
-func TestResolveDefaultFromHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv(EnvVar, "") // ensure the override is unset
-
-	h, err := Resolve()
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if h.Explicit {
-		t.Error("Explicit = true, want false")
-	}
-	want := filepath.Join(home, active.defaultDirName)
-	if h.Path != want {
-		t.Errorf("Path = %q, want %q", h.Path, want)
-	}
-	if h.Exists {
-		t.Error("Exists = true, want false (dir not created)")
-	}
-
-	if err := os.MkdirAll(want, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h2, err := Resolve()
-	if err != nil {
-		t.Fatalf("Resolve after mkdir: %v", err)
-	}
-	if !h2.Exists {
-		t.Error("Exists = false after mkdir, want true")
-	}
-}
-
 func TestResolveTildeExpansion(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := isolate(t)
 	t.Setenv(EnvVar, "~/mystore")
 
 	h, err := Resolve()
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	want := filepath.Join(home, "mystore")
-	if h.Path != want {
+	if want := filepath.Join(home, "mystore"); h.Path != want {
 		t.Errorf("Path = %q, want %q", h.Path, want)
 	}
 }
 
 func TestResolveRelativeBecomesAbsolute(t *testing.T) {
+	isolate(t)
 	t.Setenv(EnvVar, "relative/store")
 
 	h, err := Resolve()
@@ -97,5 +160,27 @@ func TestResolveRelativeBecomesAbsolute(t *testing.T) {
 	}
 	if !filepath.IsAbs(h.Path) {
 		t.Errorf("Path = %q, want absolute", h.Path)
+	}
+}
+
+func TestConfigPathIsFixedAndOutsideTheStore(t *testing.T) {
+	home := isolate(t)
+
+	path, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath: %v", err)
+	}
+	if want := filepath.Join(home, ".contour", active.configFileName); path != want {
+		t.Errorf("ConfigPath = %q, want %q", path, want)
+	}
+
+	// The config must not sit inside the default store, or relocating the store
+	// by moving the directory would take the pointer with it.
+	store, err := Resolve()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if strings.HasPrefix(path, store.Path+string(filepath.Separator)) {
+		t.Errorf("config %q lives inside the store %q", path, store.Path)
 	}
 }

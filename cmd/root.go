@@ -56,9 +56,15 @@ func resolveStore() (config.Home, error) {
 	}
 
 	if home.Explicit {
+		// Name the mechanism that chose this path, so the fix is obvious.
+		if home.Source == config.SourceEnv {
+			return config.Home{}, fmt.Errorf(
+				"%s points to %q, but that directory does not exist; create it, point %s elsewhere, or unset it",
+				config.EnvVar, home.Path, config.EnvVar)
+		}
 		return config.Home{}, fmt.Errorf(
-			"%s points to %q, but that directory does not exist; create it, point %s at your store, or unset it to use the default",
-			config.EnvVar, home.Path, config.EnvVar)
+			"the configured store %q does not exist; run `%s set-home <path>` to point contour at another directory",
+			home.Path, config.Program)
 	}
 
 	if err := scaffold.Create(home.Path); err != nil {
