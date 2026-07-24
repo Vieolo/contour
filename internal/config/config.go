@@ -115,6 +115,18 @@ func SetStorePath(path string) (storePath string, configFile string, err error) 
 	return active.setStorePath(path)
 }
 
+// EnsureFile writes a default config file if none exists yet, and reports its
+// path and whether it had to be created.
+//
+// Having the file there from the outset — with its fields present and commented
+// — means a user or an agent can open it and edit a known setting, instead of
+// having to discover that a config file is possible and then guess its schema.
+// A generated file leaves behaviour unchanged: an empty store_path means the
+// default location.
+func EnsureFile() (path string, created bool, err error) {
+	return active.ensureFile()
+}
+
 func (p profile) resolve() (Home, error) {
 	cfg, err := p.loadConfig()
 	if err != nil {
@@ -214,17 +226,72 @@ func (p profile) setStorePath(path string) (string, string, error) {
 	}
 	cfg.StorePath = storePath
 
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return "", "", fmt.Errorf("encode config: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(configFile), 0o755); err != nil {
-		return "", "", fmt.Errorf("create %s: %w", filepath.Dir(configFile), err)
-	}
-	if err := os.WriteFile(configFile, data, 0o644); err != nil {
-		return "", "", fmt.Errorf("write %s: %w", configFile, err)
+	if err := p.writeConfig(cfg); err != nil {
+		return "", "", err
 	}
 	return storePath, configFile, nil
+}
+
+// ensureFile writes a default config file when none exists yet.
+func (p profile) ensureFile() (string, bool, error) {
+	path, err := p.configPath()
+	if err != nil {
+		return "", false, err
+	}
+
+	switch _, statErr := os.Stat(path); {
+	case statErr == nil:
+		return path, false, nil
+	case !errors.Is(statErr, os.ErrNotExist):
+		return "", false, fmt.Errorf("stat %s: %w", path, statErr)
+	}
+
+	if err := p.writeConfig(file{}); err != nil {
+		return "", false, err
+	}
+	return path, true, nil
+}
+
+func (p profile) writeConfig(f file) error {
+	path, err := p.configPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, renderConfig(f), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// renderConfig produces the config file's contents, with every field present and
+// documented.
+//
+// The file is rendered from this template rather than marshalled from the struct
+// so that the comments survive every write: someone opening the file — a person
+// or an agent — should find the available settings spelled out rather than have
+// to work out the schema. The cost is that hand-written comments are replaced
+// whenever contour rewrites the file.
+func renderConfig(f file) []byte {
+	var b strings.Builder
+
+	b.WriteString("# contour configuration\n")
+	b.WriteString("#\n")
+	b.WriteString("# This file is contour's only configuration. contour reads no environment\n")
+	b.WriteString("# variables, so every setting lives here.\n")
+	b.WriteString("#\n")
+	b.WriteString("# It sits outside the store on purpose: were it kept inside, moving the\n")
+	b.WriteString("# store would carry its own pointer away with it.\n")
+	b.WriteString("\n")
+	b.WriteString("# store_path: the directory holding your rules, skills and knowledge.\n")
+	b.WriteString("#   Leave it empty to use the default location (~/" + active.defaultDirName + ").\n")
+	b.WriteString("#   Prefer `" + Program + " set-home <path>` over editing this by hand — it\n")
+	b.WriteString("#   also creates the directory and its structure.\n")
+	fmt.Fprintf(&b, "store_path: %q\n", f.StorePath)
+
+	return []byte(b.String())
 }
 
 // normalize expands a leading ~ and makes the path absolute.

@@ -51,7 +51,18 @@ func resolveStore() (config.Home, error) {
 	if err != nil {
 		return config.Home{}, err
 	}
+
+	// Always leave a documented config file behind, whatever state the store is
+	// in, so there is something to edit rather than a schema to guess at.
+	configFile, configCreated, err := config.EnsureFile()
+	if err != nil {
+		return config.Home{}, err
+	}
+
 	if home.Exists {
+		if configCreated {
+			render.ConfigCreated(configFile)
+		}
 		return home, nil
 	}
 
@@ -64,7 +75,7 @@ func resolveStore() (config.Home, error) {
 	if err := scaffold.Create(home.Path); err != nil {
 		return config.Home{}, err
 	}
-	render.StoreCreated(home.Path)
+	render.StoreCreated(home.Path, configFile)
 
 	home.Exists = true
 	return home, nil

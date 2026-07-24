@@ -32,12 +32,17 @@ var initCmd = &cobra.Command{
 		if err := scaffold.Create(home.Path); err != nil {
 			return err
 		}
+		configFile, _, err := config.EnsureFile()
+		if err != nil {
+			return err
+		}
 
 		if fresh {
 			termange.PrintSuccessf("Created contour store at %s\n", home.Path)
 		} else {
 			termange.PrintSuccessf("Store ready at %s (existing files left untouched)\n", home.Path)
 		}
+		termange.PrintInfof("Config file: %s\n", configFile)
 		if !home.Explicit {
 			termange.PrintInfof("Relocate it any time with `%s set-home <path>`.\n", config.Program)
 		}
