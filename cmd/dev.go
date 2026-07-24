@@ -38,8 +38,14 @@ var seedCmd = &cobra.Command{
 var nukeCmd = &cobra.Command{
 	Use:   "nuke",
 	Short: "Delete the development store",
-	Long: "Permanently delete the development store so you can test a clean " +
-		"initialization.\n\n" +
+	Long: "Permanently delete the development store and the development config " +
+		"file, returning the dev environment to the state of a fresh install so " +
+		"you can test a clean first run.\n\n" +
+		"Both go, not just the store: a config left pointing at a deleted " +
+		"directory would make the next command fail with a misconfiguration " +
+		"error rather than exercise the first-run path.\n\n" +
+		"Production is untouched — only the dev config file is removed, never " +
+		"the directory holding both.\n\n" +
 		"Requires --force to confirm. This command exists only in development " +
 		"builds.",
 	RunE: runNuke,
@@ -95,24 +101,44 @@ func runNuke(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Safety net: never delete the production store, even if the dev config
-	// has been pointed at it by mistake.
+	// Safety net: never delete the production store, even if the dev config has
+	// been pointed at it by mistake. The store path is user-configurable, so it
+	// genuinely can collide; the config filenames cannot, being compile-time
+	// constants that differ per build tag.
 	if dst.Path == prod.Path {
 		return fmt.Errorf("development store resolves to the production path (%s); refusing to nuke", dst.Path)
 	}
-	if !dst.Exists {
-		termange.PrintInfof("Nothing to remove: %s does not exist.\n", dst.Path)
+
+	configFile, err := config.ConfigPath()
+	if err != nil {
+		return err
+	}
+	_, statErr := os.Stat(configFile)
+	configExists := statErr == nil
+
+	if !dst.Exists && !configExists {
+		termange.PrintInfof("Nothing to remove: neither %s nor %s exists.\n", dst.Path, configFile)
 		return nil
 	}
 	if !nukeForce {
-		return fmt.Errorf("this will permanently delete %s; re-run with --force to confirm", dst.Path)
+		return fmt.Errorf("this will permanently delete the development store (%s) and config (%s); re-run with --force to confirm",
+			dst.Path, configFile)
 	}
 
-	if err := os.RemoveAll(dst.Path); err != nil {
-		return fmt.Errorf("remove development store: %w", err)
+	if dst.Exists {
+		if err := os.RemoveAll(dst.Path); err != nil {
+			return fmt.Errorf("remove development store: %w", err)
+		}
+		termange.PrintSuccessf("Removed development store at %s\n", dst.Path)
 	}
-
-	termange.PrintSuccessf("Removed development store at %s\n", dst.Path)
+	if configExists {
+		// Remove the file, never its directory: ~/.contour also holds
+		// production's config.yaml.
+		if err := os.Remove(configFile); err != nil {
+			return fmt.Errorf("remove development config: %w", err)
+		}
+		termange.PrintSuccessf("Removed development config at %s\n", configFile)
+	}
 	return nil
 }
 
