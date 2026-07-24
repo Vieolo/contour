@@ -99,11 +99,11 @@ var searchCmd = unic.UniversalCommand[searchInput, searchResult]{
 	MCPCommand: func(ctx context.Context, req *mcp.CallToolRequest, in searchInput) (*mcp.CallToolResult, searchResult, error) {
 		home, err := resolveStore()
 		if err != nil {
-			return nil, searchResult{}, err
+			return nil, searchResult{}, asToolError(err)
 		}
 		st, kinds, err := store.LoadForKind(home.Path, in.Kind)
 		if err != nil {
-			return nil, searchResult{}, err
+			return nil, searchResult{}, asToolError(err)
 		}
 
 		result := buildSearchResult(st, kinds, in.Query)

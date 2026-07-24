@@ -65,11 +65,11 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 	MCPCommand: func(ctx context.Context, req *mcp.CallToolRequest, in listInput) (*mcp.CallToolResult, listResult, error) {
 		home, err := resolveStore()
 		if err != nil {
-			return nil, listResult{}, err
+			return nil, listResult{}, asToolError(err)
 		}
 		st, kinds, err := store.LoadForKind(home.Path, in.Kind)
 		if err != nil {
-			return nil, listResult{}, err
+			return nil, listResult{}, asToolError(err)
 		}
 
 		result := listResult{Items: []listItem{}}

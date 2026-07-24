@@ -44,10 +44,12 @@ var getCmd = unic.UniversalCommand[getInput, any]{
 	MCPCommand: func(ctx context.Context, req *mcp.CallToolRequest, in getInput) (*mcp.CallToolResult, any, error) {
 		it, found, err := lookupItem(in.ID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, asToolError(err)
 		}
 		if !found {
-			return nil, nil, fmt.Errorf("no item with ID %q; use the list tool to see the valid IDs", in.ID)
+			return nil, nil, mcpserver.NotFound(
+				fmt.Sprintf("no item with ID %q", in.ID),
+				"call the list tool to see the valid IDs")
 		}
 		return mcpserver.TextResult(it.Body, "(this item has no content)"), nil, nil
 	},

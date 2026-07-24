@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -239,8 +240,8 @@ func TestLoadForKind(t *testing.T) {
 		t.Errorf("kinds = %v, want %v", kinds, want)
 	}
 
-	if _, _, err := LoadForKind(root, "bogus"); err == nil {
-		t.Error("LoadForKind(bogus) returned a nil error")
+	if _, _, err := LoadForKind(root, "bogus"); !errors.Is(err, ErrUnknownKind) {
+		t.Errorf("LoadForKind(bogus) error = %v, want it to wrap ErrUnknownKind", err)
 	}
 }
 
