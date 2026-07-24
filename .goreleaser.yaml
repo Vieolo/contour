@@ -47,14 +47,11 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
-      - "Merge pull request"
-      - "Merge branch"
+  # The release body comes from changelog.md instead: the workflow extracts the
+  # section for the tag being released and passes it with --release-notes.
+  # A generated commit list only restates the git history, whereas a release
+  # should say what changed for the person installing it.
+  disable: true
 
 brews:
   - name: contour
@@ -77,6 +74,6 @@ brews:
 release:
   draft: false
   prerelease: auto
-  footer: |
-    ---
-    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
+  # No header or footer here. The body is supplied verbatim through
+  # --release-notes, so the workflow assembles the whole thing — including the
+  # footer — and there is a single place to look for what a release says.
