@@ -8,9 +8,6 @@ func TestActiveProfileIsProduction(t *testing.T) {
 	if Dev {
 		t.Error("Dev = true, want false in a production build")
 	}
-	if EnvVar != "CONTOUR_HOME" {
-		t.Errorf("EnvVar = %q, want CONTOUR_HOME", EnvVar)
-	}
 	if Label != "production" {
 		t.Errorf("Label = %q, want production", Label)
 	}

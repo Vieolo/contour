@@ -25,9 +25,11 @@ var (
 var seedCmd = &cobra.Command{
 	Use:   "seed",
 	Short: "Copy the production store into the development store",
-	Long: "Copy the production store (CONTOUR_HOME) into the development store " +
-		"(CONTOUR_HOME_DEV) so you can test against real content without " +
-		"touching production.\n\n" +
+	Long: "Copy the production store into the development store, so you can test " +
+		"against real content without touching production.\n\n" +
+		"The two are kept apart by the build tag: a dev binary reads its own " +
+		"config file and its own default store, and can never resolve to the " +
+		"production one.\n\n" +
 		"If the development store already exists, pass --force to replace it. " +
 		"This command exists only in development builds.",
 	RunE: runSeed,
@@ -36,8 +38,8 @@ var seedCmd = &cobra.Command{
 var nukeCmd = &cobra.Command{
 	Use:   "nuke",
 	Short: "Delete the development store",
-	Long: "Permanently delete the development store (CONTOUR_HOME_DEV) so you " +
-		"can test a clean initialization.\n\n" +
+	Long: "Permanently delete the development store so you can test a clean " +
+		"initialization.\n\n" +
 		"Requires --force to confirm. This command exists only in development " +
 		"builds.",
 	RunE: runNuke,
@@ -93,7 +95,7 @@ func runNuke(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Safety net: never delete the production store, even if CONTOUR_HOME_DEV
+	// Safety net: never delete the production store, even if the dev config
 	// has been pointed at it by mistake.
 	if dst.Path == prod.Path {
 		return fmt.Errorf("development store resolves to the production path (%s); refusing to nuke", dst.Path)

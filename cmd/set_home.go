@@ -45,13 +45,6 @@ var setHomeCmd = &cobra.Command{
 			termange.PrintSuccessf("Store location set to %s\n", storePath)
 		}
 		termange.PrintInfof("Recorded in %s\n", configFile)
-
-		// Writing the config is pointless while the override is in force; say so
-		// rather than letting the user wonder why nothing changed.
-		if override := config.EnvOverride(); override != "" {
-			termange.PrintWarningf("\nWarning: %s is set to %s and takes precedence.\n", config.EnvVar, override)
-			termange.PrintWarningln("contour will keep using that path until the variable is unset.")
-		}
 		return nil
 	},
 }

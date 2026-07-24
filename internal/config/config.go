@@ -2,10 +2,14 @@
 // on-disk source of truth holding the rules, skills and knowledge that contour
 // serves to AI agents.
 //
-// The location comes from a config file rather than the environment, because
-// contour runs as an MCP server launched by an agent, which does not inherit the
-// user's shell. A variable exported in a shell profile would be invisible to it.
-// The config file lives outside the store — never inside it — so that moving the
+// A config file is the only way to relocate a store; contour reads no
+// environment variables. Two reasons: contour usually runs as an MCP server
+// launched by an agent, which does not inherit the user's shell, so a variable
+// exported in a shell profile would be invisible to it; and offering a second
+// mechanism only invites confusion about which one is in force — a poor trade
+// when the readers are agents.
+//
+// The config file lives outside the store, never inside it, so that moving the
 // store cannot carry its own pointer away.
 //
 // Resolving is side-effect free: it never creates or mutates anything on disk,
@@ -27,12 +31,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// profile describes one store "world": where its store lives by default, which
-// config file records a relocation, and which environment variable overrides
-// both.
+// profile describes one store "world": where its store lives by default, and
+// which config file records a relocation.
 type profile struct {
 	label          string
-	envVar         string
 	defaultDirName string
 	configFileName string
 }
@@ -40,25 +42,15 @@ type profile struct {
 var (
 	productionProfile = profile{
 		label:          "production",
-		envVar:         "CONTOUR_HOME",
 		defaultDirName: "contour",
 		configFileName: "config.yaml",
 	}
 	developmentProfile = profile{
 		label:          "development",
-		envVar:         "CONTOUR_HOME_DEV",
 		defaultDirName: "contour-dev",
 		configFileName: "config-dev.yaml",
 	}
 )
-
-// EnvVar is the environment variable that overrides the active store's location
-// (CONTOUR_HOME in production builds, CONTOUR_HOME_DEV in development builds).
-//
-// It takes precedence over the config file, but it is an escape hatch for CI and
-// testing rather than the way users are expected to relocate a store — an agent
-// launching contour as an MCP server will not have it set.
-var EnvVar = active.envVar
 
 // Label names the active build's world: "production" or "development".
 var Label = active.label
@@ -69,7 +61,6 @@ type Source string
 const (
 	SourceDefault Source = "default location"
 	SourceConfig  Source = "config file"
-	SourceEnv     Source = "environment variable"
 )
 
 // Home is the resolved store location together with how it was determined.
@@ -77,14 +68,14 @@ type Home struct {
 	// Path is the absolute path to the store directory.
 	Path string
 
-	// Source says which of the three mechanisms decided Path.
+	// Source says whether Path came from the config file or the default.
 	Source Source
 
-	// Explicit reports whether the location was chosen deliberately — by the
-	// config file or the environment — rather than falling back to the default.
-	// It changes how a missing store is treated: a location the user chose and
-	// that does not exist is a mistake worth reporting, whereas a missing
-	// default simply means contour has not been set up yet.
+	// Explicit reports whether the location was chosen deliberately, through the
+	// config file, rather than falling back to the default. It changes how a
+	// missing store is treated: a location the user chose and that does not
+	// exist is a mistake worth reporting, whereas a missing default simply means
+	// contour has not been set up yet.
 	Explicit bool
 
 	// Exists reports whether Path is an existing directory.
@@ -124,20 +115,7 @@ func SetStorePath(path string) (storePath string, configFile string, err error) 
 	return active.setStorePath(path)
 }
 
-// EnvOverride returns the store path forced by the environment variable, if any.
-// A caller that is about to change the config file can use it to warn that the
-// change will have no effect.
-func EnvOverride() string {
-	return strings.TrimSpace(os.Getenv(active.envVar))
-}
-
 func (p profile) resolve() (Home, error) {
-	// 1. The environment wins, for CI and testing.
-	if raw := strings.TrimSpace(os.Getenv(p.envVar)); raw != "" {
-		return newHome(raw, SourceEnv)
-	}
-
-	// 2. Then the config file, which is how users relocate a store.
 	cfg, err := p.loadConfig()
 	if err != nil {
 		return Home{}, err
@@ -146,7 +124,6 @@ func (p profile) resolve() (Home, error) {
 		return newHome(cfg.StorePath, SourceConfig)
 	}
 
-	// 3. Otherwise the default location.
 	path, err := p.defaultPath()
 	if err != nil {
 		return Home{}, err

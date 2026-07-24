@@ -39,7 +39,7 @@ var initCmd = &cobra.Command{
 			termange.PrintSuccessf("Store ready at %s (existing files left untouched)\n", home.Path)
 		}
 		if !home.Explicit {
-			termange.PrintInfof("Relocate it any time by setting %s to a new path.\n", config.EnvVar)
+			termange.PrintInfof("Relocate it any time with `%s set-home <path>`.\n", config.Program)
 		}
 		termange.PrintInfof("Next: run `%s list` to see what's inside, or edit the samples under rules/.\n", config.Program)
 		return nil

@@ -29,9 +29,6 @@ var homeCmd = &cobra.Command{
 		termange.PrintInfof("source: %s\n", string(home.Source))
 		termange.PrintInfof("config: %s\n", configFile)
 
-		if home.Source == config.SourceEnv {
-			termange.PrintWarningf("\n%s is set, so it overrides the config file.\n", config.EnvVar)
-		}
 		if !home.Exists {
 			termange.PrintWarningln("\nThat directory does not exist yet; it is created when a command needs it.")
 		}

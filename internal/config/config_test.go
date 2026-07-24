@@ -6,15 +6,14 @@ import (
 	"testing"
 )
 
-// isolate points HOME at a fresh temp directory and clears the store override,
-// so a test never reads or writes the developer's real store or config file.
-// Both the default store (~/contour) and the config directory (~/.contour) hang
-// off HOME, so that one lever isolates everything.
+// isolate points HOME at a fresh temp directory so a test never reads or writes
+// the developer's real store or config file. Both the default store (~/contour)
+// and the config directory (~/.contour) hang off HOME, so one lever isolates
+// everything — contour itself reads no environment variables.
 func isolate(t *testing.T) (home string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(EnvVar, "")
 	return home
 }
 
@@ -75,31 +74,6 @@ func TestResolveFromConfigFile(t *testing.T) {
 	}
 }
 
-func TestEnvOverridesConfigFile(t *testing.T) {
-	isolate(t)
-	configured := t.TempDir()
-	override := t.TempDir()
-
-	if _, _, err := SetStorePath(configured); err != nil {
-		t.Fatalf("SetStorePath: %v", err)
-	}
-	t.Setenv(EnvVar, override)
-
-	h, err := Resolve()
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if h.Path != override {
-		t.Errorf("Path = %q, want the environment override %q", h.Path, override)
-	}
-	if h.Source != SourceEnv {
-		t.Errorf("Source = %q, want %q", h.Source, SourceEnv)
-	}
-	if got := EnvOverride(); got != override {
-		t.Errorf("EnvOverride() = %q, want %q", got, override)
-	}
-}
-
 func TestSetStorePathReplacesPrevious(t *testing.T) {
 	isolate(t)
 	first, second := t.TempDir(), t.TempDir()
@@ -120,10 +94,13 @@ func TestSetStorePathReplacesPrevious(t *testing.T) {
 	}
 }
 
-func TestResolveExplicitMissing(t *testing.T) {
+func TestResolveConfiguredMissing(t *testing.T) {
 	isolate(t)
 	missing := filepath.Join(t.TempDir(), "nope")
-	t.Setenv(EnvVar, missing)
+
+	if _, _, err := SetStorePath(missing); err != nil {
+		t.Fatalf("SetStorePath: %v", err)
+	}
 
 	h, err := Resolve()
 	if err != nil {
@@ -137,9 +114,12 @@ func TestResolveExplicitMissing(t *testing.T) {
 	}
 }
 
-func TestResolveTildeExpansion(t *testing.T) {
+func TestSetStorePathExpandsTilde(t *testing.T) {
 	home := isolate(t)
-	t.Setenv(EnvVar, "~/mystore")
+
+	if _, _, err := SetStorePath("~/mystore"); err != nil {
+		t.Fatalf("SetStorePath: %v", err)
+	}
 
 	h, err := Resolve()
 	if err != nil {
@@ -150,9 +130,12 @@ func TestResolveTildeExpansion(t *testing.T) {
 	}
 }
 
-func TestResolveRelativeBecomesAbsolute(t *testing.T) {
+func TestSetStorePathMakesRelativeAbsolute(t *testing.T) {
 	isolate(t)
-	t.Setenv(EnvVar, "relative/store")
+
+	if _, _, err := SetStorePath("relative/store"); err != nil {
+		t.Fatalf("SetStorePath: %v", err)
+	}
 
 	h, err := Resolve()
 	if err != nil {
