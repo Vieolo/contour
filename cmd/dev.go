@@ -7,13 +7,11 @@ package cmd
 
 import (
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/config"
+	"github.com/vieolo/contour/internal/scaffold"
 	"github.com/vieolo/termange"
 )
 
@@ -82,7 +80,7 @@ func runSeed(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := copyTree(src.Path, dst.Path); err != nil {
+	if err := scaffold.CopyTree(src.Path, dst.Path); err != nil {
 		return err
 	}
 
@@ -138,65 +136,6 @@ func runNuke(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("remove development config: %w", err)
 		}
 		termange.PrintSuccessf("Removed development config at %s\n", configFile)
-	}
-	return nil
-}
-
-// copyTree recursively copies the directory tree rooted at src into dst,
-// creating dst and any parents. Non-regular files (symlinks, sockets) are
-// skipped.
-func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-
-		if d.IsDir() {
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-			return os.MkdirAll(target, info.Mode().Perm())
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		return copyFile(path, target)
-	})
-}
-
-// copyFile copies a single regular file, preserving its permission bits and
-// creating the destination's parent directories as needed.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", src, err)
-	}
-	defer in.Close()
-
-	info, err := in.Stat()
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", src, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Dir(dst), err)
-	}
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("create %s: %w", dst, err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
 }

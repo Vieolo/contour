@@ -106,6 +106,13 @@ func ConfigPath() (string, error) {
 	return active.configPath()
 }
 
+// NormalizePath expands a leading ~ and makes a path absolute, exactly as
+// SetStorePath does when recording one. A caller that must compare or act on a
+// target path before recording it uses this so the two always agree.
+func NormalizePath(path string) (string, error) {
+	return normalize(path)
+}
+
 // SetStorePath records path as the active store's location, creating the config
 // file and its directory as needed. It returns the normalised store path and the
 // config file it was written to.
@@ -287,8 +294,10 @@ func renderConfig(f file) []byte {
 	b.WriteString("\n")
 	b.WriteString("# store_path: the directory holding your rules, skills and knowledge.\n")
 	b.WriteString("#   Leave it empty to use the default location (~/" + active.defaultDirName + ").\n")
-	b.WriteString("#   Prefer `" + Program + " set-home <path>` over editing this by hand — it\n")
-	b.WriteString("#   also creates the directory and its structure.\n")
+	b.WriteString("#   Prefer `" + Program + " set-home <path>` over editing this by hand: it\n")
+	b.WriteString("#   moves the store's content to the new location, or creates one there\n")
+	b.WriteString("#   if you do not have a store yet. Editing this line only repoints\n")
+	b.WriteString("#   contour, leaving your content where it is.\n")
 	fmt.Fprintf(&b, "store_path: %q\n", f.StorePath)
 
 	return []byte(b.String())

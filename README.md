@@ -99,17 +99,25 @@ contour home
 
 ### Moving the store somewhere else
 
-Move the directory, then tell contour where it went:
-
-```bash
-mv ~/contour ~/my/new/path/contour
-```
+One command — your content comes with it:
 
 ```bash
 contour set-home ~/my/new/path/contour
 ```
 
-That records the new location in `~/.contour/config.yaml`. If the directory you name does not exist yet, contour creates it with the standard structure, so `set-home` also works as "start a new store over here".
+That moves the store to the new directory and records the location in
+`~/.contour/config.yaml`. There is nothing to move by hand.
+
+What it does depends on what is there:
+
+| Situation | Result |
+|---|---|
+| You have a store, destination is free | The store is **moved**, content and all |
+| No store yet | A new one is **created** at the destination |
+| Destination already has content | It is **adopted as-is** — nothing moved or overwritten, and contour tells you where your previous store was left |
+
+The move is atomic where it can be, and falls back to copy-then-delete across
+filesystems — so the original is only removed once the copy has succeeded.
 
 contour reads no environment variables at all. The config file is the only way to
 change where the store lives.
@@ -119,8 +127,10 @@ The generated config will hold:
 ```yaml
 # store_path: the directory holding your rules, skills and knowledge.
 #   Leave it empty to use the default location (~/contour).
-#   Prefer `contour set-home <path>` over editing this by hand — it
-#   also creates the directory and its structure.
+#   Prefer `contour set-home <path>` over editing this by hand: it
+#   moves the store's content to the new location, or creates one there
+#   if you do not have a store yet. Editing this line only repoints
+#   contour, leaving your content where it is.
 store_path: ""
 ```
 
@@ -291,7 +301,7 @@ than silently sending less than you expected, which catches typos.
 | `contour bootstrap [name]` | Print a profile's session payload. Without a name, list the available profiles. |
 | `contour init` | Create the store explicitly. Optional, contour creates it on first use. Safe to re-run; never overwrites existing files. |
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
-| `contour set-home <path>` | Move contour's attention to another store directory, recording it in the config file. Creates the directory if it does not exist. |
+| `contour set-home <path>` | Move the store to another directory, content and all, recording it in the config file. Creates a new store there if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
 | `contour version` | Print the version. |
 
@@ -316,7 +326,7 @@ contour bootstrap python
 # Where is my store?
 contour home
 
-# Keep it somewhere I can browse
+# Move it somewhere I can browse (content comes along)
 contour set-home ~/my/new/path/contour
 ```
 
