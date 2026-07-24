@@ -27,10 +27,10 @@ func loadTestStore(t *testing.T) *Store {
 	return st
 }
 
-func ids(items []Item) []string {
+func matchIDs(ms []Match) []string {
 	var out []string
-	for _, it := range items {
-		out = append(out, it.ID)
+	for _, m := range ms {
+		out = append(out, m.Item.ID)
 	}
 	return out
 }
@@ -169,14 +169,53 @@ func TestStoreSearch(t *testing.T) {
 	st := loadTestStore(t)
 
 	hits := st.Search(KindRules, "concise")
-	if len(hits) != 1 || hits[0].ID != "rules/general/010-comm" {
-		t.Errorf("Search(rules, concise) = %v, want [rules/general/010-comm]", ids(hits))
+	if len(hits) != 1 || hits[0].Item.ID != "rules/general/010-comm" {
+		t.Errorf("Search(rules, concise) = %v, want [rules/general/010-comm]", matchIDs(hits))
 	}
 	if got := st.Search(KindSkills, "concise"); len(got) != 0 {
-		t.Errorf("Search(skills, concise) = %v, want none", ids(got))
+		t.Errorf("Search(skills, concise) = %v, want none", matchIDs(got))
 	}
 	if got := st.Search(KindRules, ""); len(got) != 3 {
 		t.Errorf("Search(rules, empty) returned %d items, want 3", len(got))
+	}
+}
+
+func TestSearchMatchDetail(t *testing.T) {
+	st := loadTestStore(t)
+
+	// A body match. "wrap" appears once in the errors rule body ("Wrap errors.")
+	// and nowhere in its metadata.
+	hits := st.Search(KindRules, "wrap")
+	if len(hits) != 1 {
+		t.Fatalf("Search(rules, wrap) = %d hits, want 1", len(hits))
+	}
+	m := hits[0]
+	if m.Item.ID != "rules/python/010-errors" {
+		t.Fatalf("id = %q", m.Item.ID)
+	}
+	if want := []string{"body"}; !reflect.DeepEqual(m.MatchedIn(), want) {
+		t.Errorf("MatchedIn = %v, want %v", m.MatchedIn(), want)
+	}
+	if m.Occurrences != 1 {
+		t.Errorf("Occurrences = %d, want 1", m.Occurrences)
+	}
+	if len(m.Lines) != 1 || m.Lines[0].Number != 1 {
+		t.Errorf("Lines = %+v, want a single line numbered 1", m.Lines)
+	}
+
+	// A metadata-only match. "errs" is the description; it is not in the body.
+	meta := st.Search(KindRules, "errs")
+	if len(meta) != 1 {
+		t.Fatalf("Search(rules, errs) = %d hits, want 1", len(meta))
+	}
+	if want := []string{"description"}; !reflect.DeepEqual(meta[0].MatchedIn(), want) {
+		t.Errorf("MatchedIn = %v, want %v", meta[0].MatchedIn(), want)
+	}
+	if len(meta[0].Lines) != 0 {
+		t.Errorf("a metadata match should carry no body lines, got %+v", meta[0].Lines)
+	}
+	if meta[0].Occurrences != 0 {
+		t.Errorf("Occurrences = %d, want 0 for a metadata-only match", meta[0].Occurrences)
 	}
 }
 

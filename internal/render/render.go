@@ -44,6 +44,70 @@ func NoMatches(query string) {
 	termange.PrintWarningf("No items match %q.\n", query)
 }
 
+// TruncateLine shortens s to at most maxRunes runes, marking any cut with an
+// ellipsis so one long line never floods the output. It counts runes, not
+// bytes, so it never splits a multi-byte character.
+func TruncateLine(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes]) + "…"
+}
+
+// SearchKindHeader prints the "kind (n)" header above a group of search hits.
+func SearchKindHeader(kind store.Kind, n int) {
+	fmt.Println()
+	termange.PrintColorf(termange.ColorGreen, "%s (%d)\n", string(kind), n)
+	if n == 0 {
+		termange.PrintInfoln("  (none)")
+	}
+}
+
+// SearchHit prints one search match: the item, then either a bounded sample of
+// the matching body lines with their numbers, or — for a metadata-only match —
+// where the query was found instead.
+func SearchHit(m store.Match, maxLines, maxLineLen int) {
+	termange.PrintInfof("  %s\n", m.Item.ID)
+	if m.Item.Description != "" {
+		termange.PrintInfof("      %s\n", m.Item.Description)
+	}
+
+	if len(m.Lines) == 0 {
+		termange.PrintColorf(termange.ColorYellow, "      matched in: %s\n", strings.Join(m.MatchedIn(), ", "))
+		return
+	}
+
+	termange.PrintColorf(termange.ColorYellow, "      %d %s in body:\n",
+		m.Occurrences, pluralize(m.Occurrences, "match", "matches"))
+	shown := 0
+	for _, ln := range m.Lines {
+		if shown >= maxLines {
+			break
+		}
+		termange.PrintInfof("      %d: %s\n", ln.Number, TruncateLine(ln.Text, maxLineLen))
+		shown++
+	}
+	if extra := len(m.Lines) - shown; extra > 0 {
+		termange.PrintInfof("      … %d more matching %s\n", extra, pluralize(extra, "line", "lines"))
+	}
+}
+
+// SearchSummary prints the closing tally of a search.
+func SearchSummary(occurrences, files int, query string) {
+	fmt.Println()
+	termange.PrintInfof("%d %s of %q across %d %s.\n",
+		occurrences, pluralize(occurrences, "occurrence", "occurrences"),
+		query, files, pluralize(files, "item", "items"))
+}
+
+func pluralize(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
+}
+
 // StoreCreated reports that contour set up the store, and explains how its
 // layout works. First run is the one moment the user is guaranteed to see this,
 // so it teaches the structure rather than just naming the path.
