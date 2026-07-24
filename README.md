@@ -108,6 +108,18 @@ contour set-home ~/my/new/path/contour
 That moves the store to the new directory and records the location in
 `~/.contour/config.yaml`. There is nothing to move by hand.
 
+Or skip typing a path altogether — `here` puts the store in the directory you
+are standing in:
+
+```bash
+contour set-home here
+```
+
+Run from `~/Documents`, that gives you `~/Documents/contour`. It creates a
+folder for the store rather than filling the working directory itself, so your
+other files stay where they are. (To target a directory genuinely named
+`here`, write `./here`.)
+
 What it does depends on what is there:
 
 | Situation | Result |
@@ -301,7 +313,7 @@ than silently sending less than you expected, which catches typos.
 | `contour bootstrap [name]` | Print a profile's session payload. Without a name, list the available profiles. |
 | `contour init` | Create the store explicitly. Optional, contour creates it on first use. Safe to re-run; never overwrites existing files. |
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
-| `contour set-home <path>` | Move the store to another directory, content and all, recording it in the config file. Creates a new store there if you have none. |
+| `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
 | `contour version` | Print the version. |
 
@@ -328,6 +340,9 @@ contour home
 
 # Move it somewhere I can browse (content comes along)
 contour set-home ~/my/new/path/contour
+
+# ...or into the folder I'm already in
+contour set-home here
 ```
 
 `get` and `bootstrap` write **only** their payload to stdout, notices and

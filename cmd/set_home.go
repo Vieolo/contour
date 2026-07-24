@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/config"
@@ -11,14 +13,22 @@ import (
 	"github.com/vieolo/termange"
 )
 
+// hereKeyword puts the store in the working directory without typing a path.
+const hereKeyword = "here"
+
 var setHomeCmd = &cobra.Command{
-	Use:   "set-home <path>",
+	Use:   "set-home <path|here>",
 	Short: "Move the contour store to another directory",
 	Long: "Move the store to a new directory and record the choice in contour's " +
 		"config file.\n\n" +
 		"Your content comes with it. Leaving the store behind and creating an " +
 		"empty one at the destination would only hand you a manual merge, with a " +
 		"name clash on every sample file.\n\n" +
+		"Pass `here` instead of a path to put the store in the directory you are " +
+		"standing in. It creates a folder for the store rather than filling the " +
+		"working directory itself, so running it from ~/Documents gives you " +
+		"~/Documents/contour and leaves your documents alone. To target a " +
+		"directory that is genuinely named \"here\", write ./here.\n\n" +
 		"What happens depends on what is there:\n" +
 		"  - an existing store, with the destination free — the store is moved\n" +
 		"  - no store yet — a new one is created at the destination\n" +
@@ -30,7 +40,7 @@ var setHomeCmd = &cobra.Command{
 		"process does not inherit your shell.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		target, err := config.NormalizePath(args[0])
+		target, err := resolveTarget(args[0])
 		if err != nil {
 			return err
 		}
@@ -58,6 +68,9 @@ var setHomeCmd = &cobra.Command{
 			summary = fmt.Sprintf("Pointed contour at the existing directory %s", target)
 
 		case current.Exists:
+			if err := refuseMoveIntoItself(current.Path, target); err != nil {
+				return err
+			}
 			if err := removeEmptyDir(target); err != nil {
 				return err
 			}
@@ -107,6 +120,40 @@ func confirmAlreadyThere(current config.Home, target string) error {
 
 	termange.PrintSuccessf("Store is already at %s\n", target)
 	termange.PrintInfof("Recorded in %s\n", configFile)
+	return nil
+}
+
+// resolveTarget turns the path argument into an absolute destination, expanding
+// the "here" shorthand to a store directory inside the working directory.
+//
+// "here" deliberately creates a subdirectory rather than using the working
+// directory itself: someone running it from ~/Documents wants a store alongside
+// their other folders, not their documents turned into one. The name matches the
+// default store directory, so a dev build lands beside a production store rather
+// than on top of it.
+//
+// Only the bare word is treated as the keyword, leaving ./here to address a
+// directory actually named "here".
+func resolveTarget(arg string) (string, error) {
+	if !strings.EqualFold(strings.TrimSpace(arg), hereKeyword) {
+		return config.NormalizePath(arg)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("determine the working directory: %w", err)
+	}
+	return config.NormalizePath(filepath.Join(cwd, config.StoreDirName()))
+}
+
+// refuseMoveIntoItself rejects a destination inside the store being moved — most
+// easily reached by running `set-home here` from within the store. A rename
+// rejects it outright, but the cross-filesystem copy fallback would descend into
+// its own output and never finish.
+func refuseMoveIntoItself(store, target string) error {
+	if target == store || strings.HasPrefix(target, store+string(filepath.Separator)) {
+		return fmt.Errorf("cannot move the store inside itself: %s is within %s", target, store)
+	}
 	return nil
 }
 

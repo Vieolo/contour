@@ -113,6 +113,14 @@ func NormalizePath(path string) (string, error) {
 	return normalize(path)
 }
 
+// StoreDirName is the directory name contour gives a store of its own making:
+// "contour" in production builds, "contour-dev" in development ones. It backs
+// both the default location and the `set-home here` shorthand, so a dev store
+// never lands on top of a production one.
+func StoreDirName() string {
+	return active.defaultDirName
+}
+
 // SetStorePath records path as the active store's location, creating the config
 // file and its directory as needed. It returns the normalised store path and the
 // config file it was written to.
