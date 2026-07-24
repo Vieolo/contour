@@ -315,6 +315,7 @@ than silently sending less than you expected, which catches typos.
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
+| `contour mcp-init` | Register contour in this project's `.mcp.json`, creating or updating it. Records contour's absolute path so an agent can launch it. |
 | `contour version` | Print the version. |
 
 Some examples:
@@ -360,28 +361,56 @@ and lets the agent pull skills and knowledge as it needs them.
 
 ### Wiring it up
 
-Create a `.mcp.json` in your project root:
+From your project root:
+
+```bash
+contour mcp-init --bootstrap python
+```
+
+That writes `.mcp.json`, or adds contour to the one you already have — other
+servers in the file are left exactly as they were. Commit it and everyone on the
+project gets the same context.
+
+The result looks like this:
 
 ```json
 {
   "mcpServers": {
     "contour": {
-      "command": "contour",
+      "command": "/opt/homebrew/bin/contour",
       "args": ["mcp", "--bootstrap", "python"]
     }
   }
 }
 ```
 
-Commit that file and everyone on the project gets the same context.
+**Why the absolute path and not just `contour`?** Your agent launches its MCP
+servers without a login shell, so it never sees the `PATH` from your
+`.zshrc`. A Homebrew install lives in `/opt/homebrew/bin`, which is not in
+macOS's default `PATH` at all — a bare `contour` would simply not be found.
+`mcp-init` records the path contour was actually invoked from, so it is right
+by construction.
 
-That is the whole configuration, even if your store is somewhere custom. The agent starts contour without your shell, but contour reads its location from `~/.contour/config.yaml`, so wherever `contour set-home` pointed it is where the server reads from. Nothing to repeat per project.
+It records the symlink (`/opt/homebrew/bin/contour`), never the versioned target
+underneath it (`/opt/homebrew/Cellar/contour/0.2.0/...`), so the entry keeps
+working after `brew upgrade`.
 
-You can also add it from the terminal instead of writing the file by hand:
+Nothing else needs configuring, even if your store is somewhere custom: contour
+reads its location from `~/.contour/config.yaml`, so wherever `contour set-home`
+put it is where the server reads from.
+
+<details>
+<summary>Writing the file by hand</summary>
+
+`mcp-init` is a convenience, not a requirement. If you write `.mcp.json`
+yourself, use the absolute path to the binary — `which contour` will tell you —
+for the reason above. `claude mcp add` works too:
 
 ```bash
-claude mcp add contour -- contour mcp --bootstrap python
+claude mcp add contour -- $(which contour) mcp --bootstrap python
 ```
+
+</details>
 
 ### Choosing the profile
 
