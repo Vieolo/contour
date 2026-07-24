@@ -11,12 +11,6 @@ import (
 	"github.com/vieolo/contour/internal/mcpserver"
 )
 
-// BootstrapEnvVar names the environment variable that selects the bootstrap
-// profile when --bootstrap is not given. MCP servers are configured per project
-// in the client's own config, which makes an environment variable the natural
-// place to pin a project's entry point.
-const BootstrapEnvVar = "CONTOUR_BOOTSTRAP"
-
 var mcpBootstrap string
 
 var mcpCmd = &cobra.Command{
@@ -26,9 +20,12 @@ var mcpCmd = &cobra.Command{
 		"The selected bootstrap profile's rules are delivered eagerly in the " +
 		"server's instructions, while skills and knowledge are reachable " +
 		"through the list, search and get tools for on-demand fetching.\n\n" +
-		"Select the profile with --bootstrap or the " + BootstrapEnvVar +
-		" environment variable. Without one the server still serves the whole " +
-		"store through its tools, and says how to choose an entry point.",
+		"Select the profile with --bootstrap. Clients configure it per project — " +
+		"in Claude Code's .mcp.json, for instance, it goes in the server's args. " +
+		"Without a profile the server still serves the whole store through its " +
+		"tools, and says how to choose an entry point.\n\n" +
+		"The store's location comes from contour's config file, so the server " +
+		"finds it even though an agent launches it without your shell.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// resolveStore writes any notice to stderr, so stdout stays free for
@@ -38,19 +35,14 @@ var mcpCmd = &cobra.Command{
 			return err
 		}
 
-		profile := mcpBootstrap
-		if profile == "" {
-			profile = os.Getenv(BootstrapEnvVar)
-		}
-
 		if config.Dev {
 			fmt.Fprintf(os.Stderr, "[%s build] contour mcp: store=%s profile=%q\n",
-				config.Label, home.Path, profile)
+				config.Label, home.Path, mcpBootstrap)
 		}
 
 		server, err := mcpserver.New(mcpserver.Options{
 			Root:    home.Path,
-			Profile: profile,
+			Profile: mcpBootstrap,
 			Version: cliVersion(),
 		})
 		if err != nil {
@@ -74,6 +66,6 @@ var mcpCmd = &cobra.Command{
 
 func init() {
 	mcpCmd.Flags().StringVar(&mcpBootstrap, "bootstrap", "",
-		"bootstrap profile to load eagerly (falls back to "+BootstrapEnvVar+")")
+		"bootstrap profile whose rules are loaded eagerly")
 	rootCmd.AddCommand(mcpCmd)
 }

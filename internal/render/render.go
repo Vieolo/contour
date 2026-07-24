@@ -50,7 +50,7 @@ func NoMatches(query string) {
 //
 // Unlike the rest of this package it writes to stderr: commands such as get and
 // bootstrap emit a payload on stdout that a banner would corrupt.
-func StoreCreated(path string) {
+func StoreCreated(path, configFile string) {
 	rule := termange.PaintText(strings.Repeat("─", 64), termange.ColorYellow)
 
 	var b strings.Builder
@@ -59,11 +59,21 @@ func StoreCreated(path string) {
 	fmt.Fprintf(&b, "No store existed yet, so contour created one for you at:\n\n    %s\n\n",
 		termange.PaintText(path, termange.ColorGreen))
 	b.WriteString(storeLayoutHelp)
-	fmt.Fprintf(&b, "\n%s\n    move the directory, then set %s to its new path\n\n",
-		termange.PaintText("  To keep the store somewhere else", termange.ColorGreen), config.EnvVar)
+	fmt.Fprintf(&b, "\n%s\n    %s set-home /path/to/store\n\n",
+		termange.PaintText("  To keep the store somewhere else", termange.ColorGreen), config.Program)
+	fmt.Fprintf(&b, "%s\n    %s\n    Every setting contour has, with each one explained in the file.\n\n",
+		termange.PaintText("  Configuration", termange.ColorGreen), configFile)
 	fmt.Fprintf(&b, "%s\n", rule)
 
 	fmt.Fprint(os.Stderr, b.String())
+}
+
+// ConfigCreated notes, on stderr, that contour wrote its config file. It covers
+// the case where the store already existed and only the config was missing — the
+// user would otherwise have no idea the file is there to edit.
+func ConfigCreated(path string) {
+	fmt.Fprintf(os.Stderr, "%s %s\n",
+		termange.PaintText("contour: created its config file at", termange.ColorYellow), path)
 }
 
 const storeLayoutHelp = `Layout:

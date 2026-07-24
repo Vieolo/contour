@@ -51,7 +51,7 @@ brew install vieolo/tap/contour
 ### Using Go
 
 ```bash
-# requires Go 1.26
+# requires Go 1.26 or newer
 go install github.com/vieolo/contour@latest
 ```
 
@@ -70,9 +70,7 @@ contour version
 contour list
 ```
 
-There is no setup step. On first use contour creates the store at `~/.contour`,
-fills it with sample files, prints the layout so you know how it is organised,
-and then runs your command.
+There is no setup step. On first use contour creates the store at `~/contour`, fills it with sample files, prints the layout so you know how it is organised, and then runs your command.
 
 For example:
 
@@ -87,27 +85,66 @@ The store is one central directory. It is created once and shared by every proje
 
 | | |
 |---|---|
-| **Default location** | `~/.contour` |
-| **Override** | `CONTOUR_HOME` environment variable |
+| **Default location** | `~/contour` |
+| **Config file** | `~/.contour/config.yaml` |
 | **Created** | automatically, the first time a command needs it |
+
+The store is a plain folder of markdown files that you are meant to open and edit, so it lives somewhere visible rather than in a dotfile directory.
+
+To see where contour is currently reading from:
+
+```bash
+contour home
+```
 
 ### Moving the store somewhere else
 
-Move the directory, then point `CONTOUR_HOME` at its new home:
+One command — your content comes with it:
 
 ```bash
-mv ~/.contour /path/to/contour
+contour set-home ~/my/new/path/contour
 ```
 
-Then add the variable to your shell profile:
+That moves the store to the new directory and records the location in
+`~/.contour/config.yaml`. There is nothing to move by hand.
+
+Or skip typing a path altogether — `here` puts the store in the directory you
+are standing in:
 
 ```bash
-export CONTOUR_HOME="/path/to/contour"
+contour set-home here
 ```
 
+Run from `~/Documents`, that gives you `~/Documents/contour`. It creates a
+folder for the store rather than filling the working directory itself, so your
+other files stay where they are. (To target a directory genuinely named
+`here`, write `./here`.)
 
-> **Note**
-> When `CONTOUR_HOME` is set but points at a directory that does not exist, contour reports an error instead of creating a store there. A typo in the variable should not silently produce an empty store in the wrong place. Run `contour init` if you genuinely want a new store at that path.
+What it does depends on what is there:
+
+| Situation | Result |
+|---|---|
+| You have a store, destination is free | The store is **moved**, content and all |
+| No store yet | A new one is **created** at the destination |
+| Destination already has content | It is **adopted as-is** — nothing moved or overwritten, and contour tells you where your previous store was left |
+
+The move is atomic where it can be, and falls back to copy-then-delete across
+filesystems — so the original is only removed once the copy has succeeded.
+
+contour reads no environment variables at all. The config file is the only way to
+change where the store lives.
+
+The generated config will hold:
+
+```yaml
+# store_path: the directory holding your rules, skills and knowledge.
+#   Leave it empty to use the default location (~/contour).
+#   Prefer `contour set-home <path>` over editing this by hand: it
+#   moves the store's content to the new location, or creates one there
+#   if you do not have a store yet. Editing this line only repoints
+#   contour, leaving your content where it is.
+store_path: ""
+```
 
 
 ## Store layout
@@ -115,7 +152,7 @@ export CONTOUR_HOME="/path/to/contour"
 Four top-level folders.
 
 ```
-~/.contour/
+~/contour/
 ├── README.md
 ├── bootstrap/                            entry points (see below)
 │   └── python.md
@@ -275,6 +312,8 @@ than silently sending less than you expected, which catches typos.
 | `contour search <query> [kind]` | Search IDs, descriptions, tags and content, case-insensitively. |
 | `contour bootstrap [name]` | Print a profile's session payload. Without a name, list the available profiles. |
 | `contour init` | Create the store explicitly. Optional, contour creates it on first use. Safe to re-run; never overwrites existing files. |
+| `contour home` | Show where the store lives, how that was decided, and which config file records it. |
+| `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
 | `contour version` | Print the version. |
 
@@ -295,6 +334,15 @@ contour search migration
 
 # The full session payload for a Python project
 contour bootstrap python
+
+# Where is my store?
+contour home
+
+# Move it somewhere I can browse (content comes along)
+contour set-home ~/my/new/path/contour
+
+# ...or into the folder I'm already in
+contour set-home here
 ```
 
 `get` and `bootstrap` write **only** their payload to stdout, notices and
@@ -327,21 +375,7 @@ Create a `.mcp.json` in your project root:
 
 Commit that file and everyone on the project gets the same context.
 
-If your store is not at the default location, pass it through:
-
-```json
-{
-  "mcpServers": {
-    "contour": {
-      "command": "contour",
-      "args": ["mcp", "--bootstrap", "python"],
-      "env": {
-        "CONTOUR_HOME": "/Users/you/Dropbox/contour"
-      }
-    }
-  }
-}
-```
+That is the whole configuration, even if your store is somewhere custom. The agent starts contour without your shell, but contour reads its location from `~/.contour/config.yaml`, so wherever `contour set-home` pointed it is where the server reads from. Nothing to repeat per project.
 
 You can also add it from the terminal instead of writing the file by hand:
 
@@ -351,12 +385,9 @@ claude mcp add contour -- contour mcp --bootstrap python
 
 ### Choosing the profile
 
-Pick the profile per project, either with `--bootstrap <name>` as above or with
-the `CONTOUR_BOOTSTRAP` environment variable. The flag wins when both are set.
+Pick the profile per project with `--bootstrap <name>`, as in the `args` above. It belongs in the project's own MCP config rather than in contour's config file, because the right profile depends on the project, not on the machine.
 
-Started without either, the server still serves the whole store through its
-tools, and its instructions explain how to select an entry point — a missing
-profile degrades gracefully rather than failing.
+Started without one, the server still serves the whole store through its tools, and its instructions explain how to select an entry point — a missing profile degrades gracefully rather than failing.
 
 ### What the agent gets
 

@@ -25,8 +25,8 @@ func seedFiles() []seedFile {
 const readmeSeed = `# contour store
 
 This directory is your contour store: the single source of truth for the
-rules, skills and knowledge that contour feeds to your AI agents. Point the
-CONTOUR_HOME environment variable at it to keep it anywhere on disk.
+rules, skills and knowledge that contour feeds to your AI agents. To keep it
+somewhere else, move this directory and run: contour set-home /new/path
 
 ## Layout
 

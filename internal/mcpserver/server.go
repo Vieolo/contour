@@ -113,7 +113,7 @@ func BuildInstructions(opts Options) (string, error) {
 // started without one, naming the profiles that exist.
 func writeNoProfileNotice(b *strings.Builder, root string) {
 	b.WriteString("No bootstrap profile is selected, so no rules were loaded eagerly.\n")
-	b.WriteString("Select one with the --bootstrap flag or the CONTOUR_BOOTSTRAP environment variable.\n")
+	b.WriteString("Select one by passing --bootstrap <name> when starting the server.\n")
 
 	profiles, err := bootstrap.LoadProfiles(root)
 	if err != nil || len(profiles) == 0 {

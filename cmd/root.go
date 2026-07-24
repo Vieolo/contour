@@ -51,20 +51,31 @@ func resolveStore() (config.Home, error) {
 	if err != nil {
 		return config.Home{}, err
 	}
+
+	// Always leave a documented config file behind, whatever state the store is
+	// in, so there is something to edit rather than a schema to guess at.
+	configFile, configCreated, err := config.EnsureFile()
+	if err != nil {
+		return config.Home{}, err
+	}
+
 	if home.Exists {
+		if configCreated {
+			render.ConfigCreated(configFile)
+		}
 		return home, nil
 	}
 
 	if home.Explicit {
 		return config.Home{}, fmt.Errorf(
-			"%s points to %q, but that directory does not exist; create it, point %s at your store, or unset it to use the default",
-			config.EnvVar, home.Path, config.EnvVar)
+			"the configured store %q does not exist; run `%s set-home <path>` to point contour at another directory",
+			home.Path, config.Program)
 	}
 
 	if err := scaffold.Create(home.Path); err != nil {
 		return config.Home{}, err
 	}
-	render.StoreCreated(home.Path)
+	render.StoreCreated(home.Path, configFile)
 
 	home.Exists = true
 	return home, nil
