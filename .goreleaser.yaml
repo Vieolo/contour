@@ -47,11 +47,25 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
-  # The release body comes from changelog.md instead: the workflow extracts the
-  # section for the tag being released and passes it with --release-notes.
-  # A generated commit list only restates the git history, whereas a release
-  # should say what changed for the person installing it.
-  disable: true
+  # The release body normally comes from changelog.md: the workflow extracts the
+  # section for the tag being released and passes it with --release-notes, which
+  # short-circuits everything below. A generated commit list only restates the
+  # git history, whereas a release should say what changed for the person
+  # installing it.
+  #
+  # Do NOT set `disable: true` here. GoReleaser skips the whole changelog stage
+  # when it is set, and reading the --release-notes file is the first thing that
+  # stage does — so disabling it silently throws the file away and publishes an
+  # empty release body. The settings below are only reached when goreleaser runs
+  # without --release-notes, such as a manual invocation.
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
 
 brews:
   - name: contour

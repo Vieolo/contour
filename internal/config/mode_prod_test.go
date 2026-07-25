@@ -20,4 +20,7 @@ func TestActiveProfileIsProduction(t *testing.T) {
 	if active.configFileName != "config.yaml" {
 		t.Errorf("configFileName = %q, want config.yaml", active.configFileName)
 	}
+	if active.usageDirName != "usage" {
+		t.Errorf("usageDirName = %q, want usage", active.usageDirName)
+	}
 }

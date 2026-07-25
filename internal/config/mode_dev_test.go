@@ -22,4 +22,7 @@ func TestActiveProfileIsDevelopment(t *testing.T) {
 	if active.configFileName != "config-dev.yaml" {
 		t.Errorf("configFileName = %q, want config-dev.yaml", active.configFileName)
 	}
+	if active.usageDirName != "usage-dev" {
+		t.Errorf("usageDirName = %q, want usage-dev", active.usageDirName)
+	}
 }

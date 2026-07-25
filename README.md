@@ -37,6 +37,8 @@ Write a rule once; every project and every session can reach it.
     - [Wiring it up](#wiring-it-up)
     - [Choosing the profile](#choosing-the-profile)
     - [What the agent gets](#what-the-agent-gets)
+  - [Improving the store with usage stats](#improving-the-store-with-usage-stats)
+    - [Privacy](#privacy)
 
 ---
 
@@ -144,6 +146,13 @@ The generated config will hold:
 #   if you do not have a store yet. Editing this line only repoints
 #   contour, leaving your content where it is.
 store_path: ""
+
+# usage_logging: record which items agents fetch and what they search for,
+#   under ~/.contour/usage, so `contour stats` can show what earns its
+#   place and what agents looked for but could not find. It never leaves this
+#   machine. Search queries are recorded, so set it to false to turn logging
+#   off entirely.
+usage_logging: true
 ```
 
 
@@ -315,6 +324,8 @@ than silently sending less than you expected, which catches typos.
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
+| `contour mcp-init` | Register contour in this project's `.mcp.json`, creating or updating it. Records contour's absolute path so an agent can launch it. |
+| `contour stats` | Show how agents have used the store: gaps (searched, found nothing), never-fetched items, and most-fetched. Local only; `--project`, `--days`, `--clear`. |
 | `contour version` | Print the version. |
 
 Some examples:
@@ -343,6 +354,9 @@ contour set-home ~/my/new/path/contour
 
 # ...or into the folder I'm already in
 contour set-home here
+
+# What have agents searched for but never found?
+contour stats
 ```
 
 `get` and `bootstrap` write **only** their payload to stdout, notices and
@@ -360,28 +374,56 @@ and lets the agent pull skills and knowledge as it needs them.
 
 ### Wiring it up
 
-Create a `.mcp.json` in your project root:
+From your project root:
+
+```bash
+contour mcp-init --bootstrap python
+```
+
+That writes `.mcp.json`, or adds contour to the one you already have — other
+servers in the file are left exactly as they were. Commit it and everyone on the
+project gets the same context.
+
+The result looks like this:
 
 ```json
 {
   "mcpServers": {
     "contour": {
-      "command": "contour",
+      "command": "/opt/homebrew/bin/contour",
       "args": ["mcp", "--bootstrap", "python"]
     }
   }
 }
 ```
 
-Commit that file and everyone on the project gets the same context.
+**Why the absolute path and not just `contour`?** Your agent launches its MCP
+servers without a login shell, so it never sees the `PATH` from your
+`.zshrc`. A Homebrew install lives in `/opt/homebrew/bin`, which is not in
+macOS's default `PATH` at all — a bare `contour` would simply not be found.
+`mcp-init` records the path contour was actually invoked from, so it is right
+by construction.
 
-That is the whole configuration, even if your store is somewhere custom. The agent starts contour without your shell, but contour reads its location from `~/.contour/config.yaml`, so wherever `contour set-home` pointed it is where the server reads from. Nothing to repeat per project.
+It records the symlink (`/opt/homebrew/bin/contour`), never the versioned target
+underneath it (`/opt/homebrew/Cellar/contour/0.2.0/...`), so the entry keeps
+working after `brew upgrade`.
 
-You can also add it from the terminal instead of writing the file by hand:
+Nothing else needs configuring, even if your store is somewhere custom: contour
+reads its location from `~/.contour/config.yaml`, so wherever `contour set-home`
+put it is where the server reads from.
+
+<details>
+<summary>Writing the file by hand</summary>
+
+`mcp-init` is a convenience, not a requirement. If you write `.mcp.json`
+yourself, use the absolute path to the binary — `which contour` will tell you —
+for the reason above. `claude mcp add` works too:
 
 ```bash
-claude mcp add contour -- contour mcp --bootstrap python
+claude mcp add contour -- $(which contour) mcp --bootstrap python
 ```
+
+</details>
 
 ### Choosing the profile
 
@@ -406,3 +448,52 @@ Started without one, the server still serves the whole store through its tools, 
 | `search` | Find items by ID, description, tag or content |
 
 Edits to your store take effect on the next tool call, no need to restart the server after changing a file. The eagerly-loaded rules are fixed when the session starts, so changes to those apply from the next session.
+
+---
+
+## Improving the store with usage stats
+
+Centralising your rules is half the value; keeping them *good* is the other half. contour records how agents actually use the store during MCP sessions, so you can see what earns its place and what to fix.
+
+```bash
+contour stats
+```
+
+It shows three things, most actionable first:
+
+- **Gaps** — searches that returned nothing. This is the strongest signal: it tells you exactly what to write next. If agents keep searching for `docker` and finding nothing, add a docker rule.
+- **Never fetched** — items no agent has pulled. Review candidates, not a delete list: an item can be unused because it is weak, or because the situation it covers has not come up yet.
+- **Most fetched** — what pulls its weight, and might deserve promoting from a lazy skill to an eager rule.
+
+Example:
+
+```
+contour usage — 42 sessions across 3 projects  (all projects, all time)
+
+gaps — agents searched, found nothing
+  "docker"        12×   last 2d ago
+  "graphql"        4×   last 9d ago
+
+never fetched — review or prune
+  skills/aws/lambda-deploy
+  knowledge/legacy/soap-api
+
+most fetched
+  rules/python/010-errors        88×   last 1h ago
+  skills/python/release          14×   last 3d ago
+```
+
+Scope it to one project with `--project <substring>`, to a recent window with `--days <n>`, or wipe the logs with `--clear`.
+
+> **Note**
+> This measures *engagement*, not effectiveness — what agents reached for, not whether it helped. A never-fetched item is a prompt to look, not a verdict to delete.
+
+### Privacy
+
+Usage stays on your machine; contour never sends it anywhere. It is on by default and disclosed in the config file, where you can turn it off:
+
+```yaml
+usage_logging: false
+```
+
+Search queries are recorded (they are what makes the gaps signal work), so if that matters to you, set the flag to `false` or run `contour stats --clear` to wipe the logs. Only MCP (agent) usage is recorded — never the commands you run yourself in the terminal.

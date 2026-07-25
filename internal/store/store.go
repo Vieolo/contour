@@ -77,12 +77,13 @@ func (s *Store) Count(kind Kind) int {
 	return n
 }
 
-// Search returns the items of a kind matching query, in load order.
-func (s *Store) Search(kind Kind, query string) []Item {
-	var out []Item
+// Search returns how each matching item of a kind matched the query, in load
+// order. Non-matching items are omitted.
+func (s *Store) Search(kind Kind, query string) []Match {
+	var out []Match
 	for _, it := range s.ByKind(kind) {
-		if it.Matches(query) {
-			out = append(out, it)
+		if m, ok := it.findMatch(query); ok {
+			out = append(out, m)
 		}
 	}
 	return out
