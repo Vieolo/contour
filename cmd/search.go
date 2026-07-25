@@ -107,6 +107,9 @@ var searchCmd = unic.UniversalCommand[searchInput, searchResult]{
 		}
 
 		result := buildSearchResult(st, kinds, in.Query)
+		// FileCount is the gap signal: zero means the agent looked and found
+		// nothing.
+		mcpUsage.Search(in.Query, in.Kind, result.FileCount)
 
 		// The structured result is the contract; the text is a readable
 		// rendering of the same data, so the outcome reaches the model whether

@@ -46,6 +46,7 @@ var getCmd = unic.UniversalCommand[getInput, any]{
 		if err != nil {
 			return nil, nil, asToolError(err)
 		}
+		mcpUsage.Get(in.ID, found)
 		if !found {
 			return nil, nil, mcpserver.NotFound(
 				fmt.Sprintf("no item with ID %q", in.ID),

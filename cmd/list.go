@@ -86,6 +86,7 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 				})
 			}
 		}
+		mcpUsage.List(in.Kind)
 		return mcpserver.TextResult(b.String(), "The store contains no items."), result, nil
 	},
 }

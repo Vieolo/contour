@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/mcpserver"
+	"github.com/vieolo/contour/internal/usage"
 )
 
 var mcpBootstrap string
@@ -38,6 +39,18 @@ var mcpCmd = &cobra.Command{
 		if config.Dev {
 			fmt.Fprintf(os.Stderr, "[%s build] contour mcp: store=%s profile=%q\n",
 				config.Label, home.Path, mcpBootstrap)
+		}
+
+		// Open the session's usage log, if enabled. It is best-effort: a failure
+		// to open (or a disabled toggle) leaves mcpUsage nil, and its nil-safe
+		// methods make the handlers no-op — logging never blocks serving.
+		if enabled, err := config.UsageLoggingEnabled(); err == nil && enabled {
+			if logger, err := usage.Open(mcpBootstrap); err != nil {
+				fmt.Fprintf(os.Stderr, "contour: usage logging off (%v)\n", err)
+			} else {
+				mcpUsage = logger
+				defer mcpUsage.Close()
+			}
 		}
 
 		server, err := mcpserver.New(mcpserver.Options{
