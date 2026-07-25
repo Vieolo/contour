@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/store"
+	"github.com/vieolo/contour/internal/usage"
 	"github.com/vieolo/termange"
 )
 
@@ -42,6 +44,169 @@ func KindSection(kind store.Kind, items []store.Item) {
 func NoMatches(query string) {
 	fmt.Println()
 	termange.PrintWarningf("No items match %q.\n", query)
+}
+
+// TruncateLine shortens s to at most maxRunes runes, marking any cut with an
+// ellipsis so one long line never floods the output. It counts runes, not
+// bytes, so it never splits a multi-byte character.
+func TruncateLine(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes]) + "…"
+}
+
+// SearchKindHeader prints the "kind (n)" header above a group of search hits.
+func SearchKindHeader(kind store.Kind, n int) {
+	fmt.Println()
+	termange.PrintColorf(termange.ColorGreen, "%s (%d)\n", string(kind), n)
+	if n == 0 {
+		termange.PrintInfoln("  (none)")
+	}
+}
+
+// SearchHit prints one search match: the item, then either a bounded sample of
+// the matching body lines with their numbers, or — for a metadata-only match —
+// where the query was found instead.
+func SearchHit(m store.Match, maxLines, maxLineLen int) {
+	termange.PrintInfof("  %s\n", m.Item.ID)
+	if m.Item.Description != "" {
+		termange.PrintInfof("      %s\n", m.Item.Description)
+	}
+
+	if len(m.Lines) == 0 {
+		termange.PrintColorf(termange.ColorYellow, "      matched in: %s\n", strings.Join(m.MatchedIn(), ", "))
+		return
+	}
+
+	termange.PrintColorf(termange.ColorYellow, "      %d %s in body:\n",
+		m.Occurrences, pluralize(m.Occurrences, "match", "matches"))
+	shown := 0
+	for _, ln := range m.Lines {
+		if shown >= maxLines {
+			break
+		}
+		termange.PrintInfof("      %d: %s\n", ln.Number, TruncateLine(ln.Text, maxLineLen))
+		shown++
+	}
+	if extra := len(m.Lines) - shown; extra > 0 {
+		termange.PrintInfof("      … %d more matching %s\n", extra, pluralize(extra, "line", "lines"))
+	}
+}
+
+// SearchSummary prints the closing tally of a search.
+func SearchSummary(occurrences, files int, query string) {
+	fmt.Println()
+	termange.PrintInfof("%d %s of %q across %d %s.\n",
+		occurrences, pluralize(occurrences, "occurrence", "occurrences"),
+		query, files, pluralize(files, "item", "items"))
+}
+
+func pluralize(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
+}
+
+// Display caps for the usage report: the lists are review aids, not exhaustive
+// dumps.
+const (
+	usageTopGaps    = 10
+	usageTopFetched = 10
+	usageMaxNever   = 20
+)
+
+// UsageReport prints the usage summary: gaps first (the most actionable), then
+// never-fetched review candidates, then the most-fetched items, and any broken
+// references. scope describes the filter in force (e.g. "all projects, all
+// time").
+func UsageReport(scope string, r *usage.Report, neverFetched []store.Item) {
+	termange.PrintInfof("contour usage — %d %s across %d %s  (%s)\n",
+		r.Sessions, pluralize(r.Sessions, "session", "sessions"),
+		r.Projects, pluralize(r.Projects, "project", "projects"), scope)
+
+	if r.Sessions == 0 {
+		return
+	}
+
+	usageHeader("gaps — agents searched, found nothing")
+	if len(r.Gaps) == 0 {
+		usageNone()
+	} else {
+		for _, t := range capTallies(r.Gaps, usageTopGaps) {
+			termange.PrintInfof("  %-30s %d×   last %s\n", `"`+t.Key+`"`, t.Count, ago(t.LastSeen))
+		}
+		usageMore(len(r.Gaps) - usageTopGaps)
+	}
+
+	usageHeader("never fetched — review or prune")
+	if len(neverFetched) == 0 {
+		usageNone()
+	} else {
+		shown := neverFetched
+		if len(shown) > usageMaxNever {
+			shown = shown[:usageMaxNever]
+		}
+		for _, it := range shown {
+			termange.PrintInfof("  %s\n", it.ID)
+		}
+		usageMore(len(neverFetched) - len(shown))
+	}
+
+	usageHeader("most fetched")
+	if len(r.Fetches) == 0 {
+		usageNone()
+	} else {
+		for _, t := range capTallies(r.Fetches, usageTopFetched) {
+			termange.PrintInfof("  %-42s %d×   last %s\n", t.Key, t.Count, ago(t.LastSeen))
+		}
+	}
+
+	if len(r.MissingFetches) > 0 {
+		usageHeader("fetched but missing — broken references")
+		for _, t := range r.MissingFetches {
+			termange.PrintInfof("  %-42s %d×\n", t.Key, t.Count)
+		}
+	}
+}
+
+func usageHeader(title string) {
+	fmt.Println()
+	termange.PrintColorf(termange.ColorGreen, "%s\n", title)
+}
+
+func usageNone() { termange.PrintInfoln("  (none)") }
+
+func usageMore(extra int) {
+	if extra > 0 {
+		termange.PrintInfof("  … %d more\n", extra)
+	}
+}
+
+func capTallies(t []usage.Tally, n int) []usage.Tally {
+	if len(t) > n {
+		return t[:n]
+	}
+	return t
+}
+
+// ago renders a coarse "how long ago" for a timestamp.
+func ago(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	switch d := time.Since(t); {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 // StoreCreated reports that contour set up the store, and explains how its

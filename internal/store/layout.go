@@ -7,9 +7,16 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrUnknownKind is returned by ParseKind (and thus LoadForKind) when a kind
+// name is not one of rules, skills or knowledge. Callers use errors.Is to
+// classify the failure — the MCP layer, for instance, turns it into a
+// structured invalid-argument tool error.
+var ErrUnknownKind = errors.New("unknown kind")
 
 // Kind is a category of item in the store. Each Kind is also the name of a
 // top-level directory under the store root.
@@ -54,6 +61,6 @@ func ParseKind(name string) (Kind, error) {
 	case "knowledge":
 		return KindKnowledge, nil
 	default:
-		return "", fmt.Errorf("unknown kind %q (want: rules, skills or knowledge)", name)
+		return "", fmt.Errorf("%w %q (want: rules, skills or knowledge)", ErrUnknownKind, name)
 	}
 }

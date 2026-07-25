@@ -37,6 +37,7 @@ type profile struct {
 	label          string
 	defaultDirName string
 	configFileName string
+	usageDirName   string
 }
 
 var (
@@ -44,11 +45,13 @@ var (
 		label:          "production",
 		defaultDirName: "contour",
 		configFileName: "config.yaml",
+		usageDirName:   "usage",
 	}
 	developmentProfile = profile{
 		label:          "development",
 		defaultDirName: "contour-dev",
 		configFileName: "config-dev.yaml",
+		usageDirName:   "usage-dev",
 	}
 )
 
@@ -86,6 +89,11 @@ type Home struct {
 type file struct {
 	// StorePath is where the store lives. Empty means the default location.
 	StorePath string `yaml:"store_path"`
+
+	// UsageLogging toggles per-session usage logging. A pointer so that an
+	// absent field (an older config, or an upgrade) is distinguishable from an
+	// explicit false: absent means the default, which is on.
+	UsageLogging *bool `yaml:"usage_logging"`
 }
 
 // Resolve determines where the active store lives (the development store in dev
@@ -104,6 +112,29 @@ func ResolveProduction() (Home, error) {
 // not it exists yet.
 func ConfigPath() (string, error) {
 	return active.configPath()
+}
+
+// UsageLoggingEnabled reports whether per-session usage logging is on. It
+// defaults to on when the config does not mention it, so an existing install
+// begins logging after an upgrade; usage_logging: false turns it off entirely.
+func UsageLoggingEnabled() (bool, error) {
+	cfg, err := active.loadConfig()
+	if err != nil {
+		return false, err
+	}
+	return cfg.UsageLogging == nil || *cfg.UsageLogging, nil
+}
+
+// UsageDir returns the directory holding per-session usage logs. It lives beside
+// the config file in ~/.contour — never inside the store — because usage is
+// about behaviour, not content, and must not travel when the store is moved. Dev
+// builds get their own directory so dev sessions never pollute production stats.
+func UsageDir() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, active.usageDirName), nil
 }
 
 // NormalizePath expands a leading ~ and makes a path absolute, exactly as
@@ -307,6 +338,16 @@ func renderConfig(f file) []byte {
 	b.WriteString("#   if you do not have a store yet. Editing this line only repoints\n")
 	b.WriteString("#   contour, leaving your content where it is.\n")
 	fmt.Fprintf(&b, "store_path: %q\n", f.StorePath)
+
+	b.WriteString("\n")
+	b.WriteString("# usage_logging: record which items agents fetch and what they search for,\n")
+	b.WriteString("#   under ~/.contour/usage, so `" + Program + " stats` can show what earns its\n")
+	b.WriteString("#   place and what agents looked for but could not find. It never leaves this\n")
+	b.WriteString("#   machine. Search queries are recorded, so set it to false to turn logging\n")
+	b.WriteString("#   off entirely.\n")
+	// Emit the effective value rather than a constant, so a user's explicit
+	// false survives when contour rewrites the file (e.g. on set-home).
+	fmt.Fprintf(&b, "usage_logging: %t\n", f.UsageLogging == nil || *f.UsageLogging)
 
 	return []byte(b.String())
 }
