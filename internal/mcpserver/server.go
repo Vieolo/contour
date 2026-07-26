@@ -28,9 +28,18 @@ type Options struct {
 	// Root is the contour store's directory.
 	Root string
 
-	// Profile is the bootstrap profile loaded eagerly. When empty no rules are
-	// preloaded, and the instructions explain how to select one.
-	Profile string
+	// Overlays are the project-local directories layered over the store, whose
+	// items are always active for this project.
+	Overlays []string
+
+	// EagerFiles are single files (e.g. AGENTS.md) loaded eagerly as local
+	// rules, from the project config.
+	EagerFiles []store.EagerFile
+
+	// Profiles are the bootstrap profiles loaded eagerly, composed in order.
+	// When empty no central rules are preloaded (local overlay rules still are),
+	// and the instructions explain how to select an entry point.
+	Profiles []string
 
 	// Version is reported to clients during initialisation.
 	Version string
@@ -84,7 +93,7 @@ func TextResult(text, fallback string) *mcp.CallToolResult {
 // BuildInstructions composes what the client receives at initialisation: a short
 // preamble, the profile's eager rules, and menus of what can be fetched.
 func BuildInstructions(opts Options) (string, error) {
-	st, err := store.Load(opts.Root)
+	st, err := store.LoadProject(opts.Root, opts.Overlays, opts.EagerFiles)
 	if err != nil {
 		return "", err
 	}
@@ -93,19 +102,23 @@ func BuildInstructions(opts Options) (string, error) {
 	b.WriteString("contour provides the centralised rules, skills and knowledge for this session.\n")
 	b.WriteString("Any rules below are already in effect. Use the `list`, `search` and `get` tools to pull anything else on demand.\n\n")
 
-	if opts.Profile == "" {
+	if len(opts.Profiles) == 0 {
 		writeNoProfileNotice(&b, opts.Root)
-		for _, k := range store.Kinds {
-			b.WriteString(bootstrap.RenderMenu("Available "+string(k), st.ByKind(k), fetchHint))
-		}
+		// Local project rules still apply without a central profile.
+		b.WriteString(bootstrap.RenderLocalRules(st.BySource(store.KindRules, store.OriginLocal)))
+		// Central rules aren't eager here, but they remain fetchable, so list
+		// them alongside the on-demand skills and knowledge.
+		b.WriteString(bootstrap.RenderMenu("Available rules", st.BySource(store.KindRules, store.OriginStore), fetchHint))
+		b.WriteString(bootstrap.RenderMenu("Available skills", st.ByKind(store.KindSkills), fetchHint))
+		b.WriteString(bootstrap.RenderMenu("Available knowledge", st.ByKind(store.KindKnowledge), fetchHint))
 		return strings.TrimRight(b.String(), "\n") + "\n", nil
 	}
 
-	p, err := bootstrap.LoadProfile(opts.Root, opts.Profile)
+	profiles, err := bootstrap.LoadNamed(opts.Root, opts.Profiles)
 	if err != nil {
 		return "", err
 	}
-	b.WriteString(bootstrap.Compose(p, st).Render(fetchHint))
+	b.WriteString(bootstrap.Compose(profiles, st).Render(fetchHint))
 	return b.String(), nil
 }
 
@@ -113,7 +126,7 @@ func BuildInstructions(opts Options) (string, error) {
 // started without one, naming the profiles that exist.
 func writeNoProfileNotice(b *strings.Builder, root string) {
 	b.WriteString("No bootstrap profile is selected, so no rules were loaded eagerly.\n")
-	b.WriteString("Select one by passing --bootstrap <name> when starting the server.\n")
+	b.WriteString("Select one or more by passing --bootstrap <name> when starting the server.\n")
 
 	profiles, err := bootstrap.LoadProfiles(root)
 	if err != nil || len(profiles) == 0 {

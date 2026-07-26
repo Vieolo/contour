@@ -5,11 +5,20 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/vieolo/contour/internal/config"
 )
 
-func writeSession(t *testing.T, home, group, name string, lines ...string) {
+// writeSession writes a session log into the active usage directory, asking
+// config where that is rather than assuming "usage" — under a dev build it is
+// "usage-dev".
+func writeSession(t *testing.T, group, name string, lines ...string) {
 	t.Helper()
-	dir := filepath.Join(home, ".contour", "usage", group)
+	base, err := config.UsageDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, group)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +35,7 @@ func TestAggregate(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	writeSession(t, home, "a-1111", "s1.jsonl",
+	writeSession(t, "a-1111", "s1.jsonl",
 		`{"ts":"2026-07-01T10:00:00Z","event":"session_start","project":"/proj/a"}`,
 		`{"ts":"2026-07-01T10:01:00Z","event":"get","project":"/proj/a","id":"rules/x","found":true}`,
 		`{"ts":"2026-07-01T10:02:00Z","event":"get","project":"/proj/a","id":"rules/x","found":true}`,
@@ -34,7 +43,7 @@ func TestAggregate(t *testing.T) {
 		`{"ts":"2026-07-01T10:04:00Z","event":"search","project":"/proj/a","query":"k8s","results":0}`,
 		`{"ts":"2026-07-01T10:05:00Z","event":"get","project":"/proj/a","id":"gone","found":false}`,
 	)
-	writeSession(t, home, "b-2222", "s2.jsonl",
+	writeSession(t, "b-2222", "s2.jsonl",
 		`{"ts":"2026-07-02T09:00:00Z","event":"session_start","project":"/proj/b"}`,
 		`{"ts":"2026-07-02T09:01:00Z","event":"search","project":"/proj/b","query":"docker","results":0}`,
 		`{"ts":"2026-07-02T09:02:00Z","event":"get","project":"/proj/b","id":"skills/y","found":true}`,
@@ -69,11 +78,11 @@ func TestAggregateProjectFilter(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	writeSession(t, home, "a", "s1.jsonl",
+	writeSession(t, "a", "s1.jsonl",
 		`{"ts":"2026-07-01T10:00:00Z","event":"session_start","project":"/work/alpha"}`,
 		`{"ts":"2026-07-01T10:01:00Z","event":"search","project":"/work/alpha","query":"docker","results":0}`,
 	)
-	writeSession(t, home, "b", "s2.jsonl",
+	writeSession(t, "b", "s2.jsonl",
 		`{"ts":"2026-07-02T10:00:00Z","event":"session_start","project":"/work/beta"}`,
 		`{"ts":"2026-07-02T10:01:00Z","event":"search","project":"/work/beta","query":"k8s","results":0}`,
 	)
@@ -94,7 +103,7 @@ func TestAggregateSinceFilter(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	writeSession(t, home, "a", "s1.jsonl",
+	writeSession(t, "a", "s1.jsonl",
 		`{"ts":"2020-01-01T00:00:00Z","event":"search","project":"/p","query":"old","results":0}`,
 		`{"ts":"2030-01-01T00:00:00Z","event":"search","project":"/p","query":"new","results":0}`,
 	)

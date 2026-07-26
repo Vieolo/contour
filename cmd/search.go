@@ -72,7 +72,11 @@ var searchCmd = unic.UniversalCommand[searchInput, searchResult]{
 		if len(args) == 2 {
 			kind = args[1]
 		}
-		st, kinds, err := store.LoadForKind(home.Path, kind)
+		st, err := loadProjectStore(home.Path)
+		if err != nil {
+			return err
+		}
+		kinds, err := resolveKinds(kind)
 		if err != nil {
 			return err
 		}
@@ -101,7 +105,11 @@ var searchCmd = unic.UniversalCommand[searchInput, searchResult]{
 		if err != nil {
 			return nil, searchResult{}, asToolError(err)
 		}
-		st, kinds, err := store.LoadForKind(home.Path, in.Kind)
+		st, err := loadProjectStore(home.Path)
+		if err != nil {
+			return nil, searchResult{}, asToolError(err)
+		}
+		kinds, err := resolveKinds(in.Kind)
 		if err != nil {
 			return nil, searchResult{}, asToolError(err)
 		}

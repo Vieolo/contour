@@ -12,18 +12,18 @@ import (
 	"github.com/vieolo/contour/internal/usage"
 )
 
-var mcpBootstrap string
+var mcpBootstrap []string
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "Run the contour MCP server over stdio",
 	Long: "Serve the contour store to an MCP client over stdio.\n\n" +
-		"The selected bootstrap profile's rules are delivered eagerly in the " +
+		"The selected bootstrap profiles' rules are delivered eagerly in the " +
 		"server's instructions, while skills and knowledge are reachable " +
 		"through the list, search and get tools for on-demand fetching.\n\n" +
-		"Select the profile with --bootstrap. Clients configure it per project — " +
-		"in Claude Code's .mcp.json, for instance, it goes in the server's args. " +
-		"Without a profile the server still serves the whole store through its " +
+		"The profiles normally come from the project config; --bootstrap " +
+		"overrides them and may be repeated to combine entry points. Without " +
+		"any profile the server still serves the whole store through its " +
 		"tools, and says how to choose an entry point.\n\n" +
 		"The store's location comes from contour's config file, so the server " +
 		"finds it even though an agent launches it without your shell.",
@@ -36,16 +36,24 @@ var mcpCmd = &cobra.Command{
 			return err
 		}
 
+		// The --bootstrap flag wins; otherwise the project config chooses the
+		// profiles, so they can live with the project instead of in .mcp.json.
+		overlays, eagerFiles, cfgBootstrap := projectContext()
+		profiles := mcpBootstrap
+		if len(profiles) == 0 {
+			profiles = cfgBootstrap
+		}
+
 		if config.Dev {
-			fmt.Fprintf(os.Stderr, "[%s build] contour mcp: store=%s profile=%q\n",
-				config.Label, home.Path, mcpBootstrap)
+			fmt.Fprintf(os.Stderr, "[%s build] contour mcp: store=%s profiles=%q\n",
+				config.Label, home.Path, profiles)
 		}
 
 		// Open the session's usage log, if enabled. It is best-effort: a failure
 		// to open (or a disabled toggle) leaves mcpUsage nil, and its nil-safe
 		// methods make the handlers no-op — logging never blocks serving.
 		if enabled, err := config.UsageLoggingEnabled(); err == nil && enabled {
-			if logger, err := usage.Open(mcpBootstrap); err != nil {
+			if logger, err := usage.Open(profiles); err != nil {
 				fmt.Fprintf(os.Stderr, "contour: usage logging off (%v)\n", err)
 			} else {
 				mcpUsage = logger
@@ -54,9 +62,11 @@ var mcpCmd = &cobra.Command{
 		}
 
 		server, err := mcpserver.New(mcpserver.Options{
-			Root:    home.Path,
-			Profile: mcpBootstrap,
-			Version: cliVersion(),
+			Root:       home.Path,
+			Overlays:   overlays,
+			EagerFiles: eagerFiles,
+			Profiles:   profiles,
+			Version:    cliVersion(),
 		})
 		if err != nil {
 			return err
@@ -78,7 +88,7 @@ var mcpCmd = &cobra.Command{
 }
 
 func init() {
-	mcpCmd.Flags().StringVar(&mcpBootstrap, "bootstrap", "",
-		"bootstrap profile whose rules are loaded eagerly")
+	mcpCmd.Flags().StringSliceVar(&mcpBootstrap, "bootstrap", nil,
+		"bootstrap profile whose rules are loaded eagerly (repeatable)")
 	rootCmd.AddCommand(mcpCmd)
 }

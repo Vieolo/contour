@@ -9,7 +9,6 @@ import (
 	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/mcpserver"
 	"github.com/vieolo/contour/internal/render"
-	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/contour/internal/unic"
 )
 
@@ -27,18 +26,37 @@ type listResult struct {
 type listItem struct {
 	ID          string   `json:"id" jsonschema:"pass to the get tool to read the full item"`
 	Kind        string   `json:"kind"`
+	Source      string   `json:"source" jsonschema:"store (central) or local (this project's overlay); local takes precedence on conflict"`
 	Description string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 }
+
+// listProfilesXref annotates the listing with which bootstrap profiles offer
+// each item. It is a CLI-only flag: an agent has no use for knowing how its own
+// context was assembled, and the tool schema is better off without it.
+var listProfilesXref bool
 
 var listCmd = unic.UniversalCommand[listInput, listResult]{
 	Use:   "list [kind]",
 	Short: "List the items in the contour store",
 	Long: "List the store's items with their tags and descriptions. Optionally " +
-		"restrict to a single kind: rules, skills or knowledge.",
+		"restrict to a single kind: rules, skills or knowledge.\n\n" +
+		"Pass --profiles to cross-reference each item against the bootstrap " +
+		"profiles, showing which of them offer it at the start of a session and " +
+		"which items no profile offers.\n\n" +
+		"An item no profile selects is not lost: list, search and get serve the " +
+		"whole store regardless of profile, so an agent can always reach it. What " +
+		"it lacks is disclosure — nothing puts it in front of the agent up front, " +
+		"so it is only used if the agent goes looking. Project-local items need no " +
+		"profile and are always active.",
 	Description: "List the items available in the contour store with their IDs, descriptions and tags. " +
 		"Optionally restrict to a single kind. Pass a returned ID to the get tool to read its content.",
 	Args: cobra.MaximumNArgs(1),
+
+	CLIFlags: func(cmd *cobra.Command) {
+		cmd.Flags().BoolVar(&listProfilesXref, "profiles", false,
+			"show which bootstrap profiles offer each item")
+	},
 
 	CLICommand: func(cmd *cobra.Command, args []string) error {
 		home, err := resolveStore()
@@ -50,15 +68,43 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 		if len(args) == 1 {
 			kind = args[0]
 		}
-		st, kinds, err := store.LoadForKind(home.Path, kind)
+		st, err := loadProjectStore(home.Path)
+		if err != nil {
+			return err
+		}
+		kinds, err := resolveKinds(kind)
 		if err != nil {
 			return err
 		}
 
 		render.StoreHeader(home.Path)
-		for _, k := range kinds {
-			render.KindSection(k, st.ByKind(k))
+		if !listProfilesXref {
+			for _, k := range kinds {
+				render.KindSection(k, st.ByKind(k))
+			}
+			return nil
 		}
+
+		profiles, err := bootstrap.LoadProfiles(home.Path)
+		if err != nil {
+			return err
+		}
+		xref := bootstrap.CrossReference(profiles, st)
+		render.ProfilesHeader(xref.Names())
+
+		// Count only within the kinds shown, so `list skills --profiles` does not
+		// close with a tally covering rules and knowledge the reader cannot see.
+		unoffered := 0
+		for _, k := range kinds {
+			items := xref.ByKind(k)
+			for _, ip := range items {
+				if !ip.Offered() {
+					unoffered++
+				}
+			}
+			render.KindSectionProfiles(k, items)
+		}
+		render.UnofferedSummary(unoffered)
 		return nil
 	},
 
@@ -67,7 +113,11 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 		if err != nil {
 			return nil, listResult{}, asToolError(err)
 		}
-		st, kinds, err := store.LoadForKind(home.Path, in.Kind)
+		st, err := loadProjectStore(home.Path)
+		if err != nil {
+			return nil, listResult{}, asToolError(err)
+		}
+		kinds, err := resolveKinds(in.Kind)
 		if err != nil {
 			return nil, listResult{}, asToolError(err)
 		}
@@ -81,6 +131,7 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 				result.Items = append(result.Items, listItem{
 					ID:          it.ID,
 					Kind:        string(it.Kind),
+					Source:      string(it.Source),
 					Description: it.Description,
 					Tags:        it.Tags,
 				})
