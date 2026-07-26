@@ -358,7 +358,7 @@ An identical path in both places (say `rules/python/errors.md` locally and in th
 If you already keep a `CLAUDE.md` or `AGENTS.md`, you don't have to restructure it. List it in the project config and contour loads it eagerly as a project rule:
 
 ```yaml
-# .contour/config.yaml
+# .contour.yaml   (at the project root)
 bootstrap: python              # the central profile for this project
 eager_files:
   - AGENTS.md
@@ -366,6 +366,8 @@ eager_files:
 ```
 
 `contour mcp-init` writes this file for you and detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
+
+The config lives at the project **root** (`.contour.yaml`), not inside an overlay folder, so moving your local rules from `.contour/` to `.agents/` later never silently drops it — the same reason the machine-wide config sits outside the store.
 
 ### Gradual migration
 
@@ -385,7 +387,7 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
-| `contour mcp-init` | Set the project up: register contour in `.mcp.json` (absolute path, bare `mcp`) and write `.contour/config.yaml` with the profile, detecting a root `AGENTS.md`/`CLAUDE.md`. |
+| `contour mcp-init` | Set the project up: register contour in `.mcp.json` (absolute path, bare `mcp`) and write `.contour.yaml` with the profile, detecting a root `AGENTS.md`/`CLAUDE.md`. |
 | `contour stats` | Show how agents have used the store: gaps (searched, found nothing), never-fetched items, and most-fetched. Local only; `--project`, `--days`, `--clear`. |
 | `contour version` | Print the version. |
 
@@ -443,7 +445,7 @@ contour mcp-init --bootstrap python
 
 That does two things: registers contour in `.mcp.json` (or adds it to the one
 you already have, leaving other servers untouched), and writes a
-`.contour/config.yaml` recording the profile. Commit both and everyone on the
+`.contour.yaml` recording the profile. Commit both and everyone on the
 project gets the same context.
 
 The `.mcp.json` entry is a bare launch line — the profile lives in the project
@@ -471,7 +473,7 @@ It records the symlink (`/opt/homebrew/bin/contour`), never the versioned target
 underneath it (`/opt/homebrew/Cellar/contour/0.2.0/...`), so the entry keeps
 working after `brew upgrade`.
 
-The profile and any eager files come from `.contour/config.yaml` (see
+The profile and any eager files come from `.contour.yaml` (see
 [Project-specific context](#project-specific-context)), so nothing project-specific
 is baked into the launch arguments. And nothing else needs configuring even if
 your store is somewhere custom: contour reads its location from
@@ -489,7 +491,7 @@ for the reason above, and a bare `mcp` argument. `claude mcp add` works too:
 claude mcp add contour -- $(which contour) mcp
 ```
 
-Then set the profile in `.contour/config.yaml` with `bootstrap: <name>`.
+Then set the profile in `.contour.yaml` with `bootstrap: <name>`.
 
 </details>
 
@@ -498,7 +500,7 @@ Then set the profile in `.contour/config.yaml` with `bootstrap: <name>`.
 The profile lives in the project config, so it travels with the project:
 
 ```yaml
-# .contour/config.yaml
+# .contour.yaml   (at the project root)
 bootstrap: python
 ```
 

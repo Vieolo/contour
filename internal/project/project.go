@@ -1,7 +1,12 @@
-// Package project reads a project's contour config from an overlay folder in the
-// working directory: which central bootstrap profile to load, and which single
-// files to load eagerly. It is the per-project counterpart to the machine-wide
-// config in internal/config.
+// Package project reads a project's contour config from a .contour.yaml at the
+// project root: which central bootstrap profile to load, and which single files
+// to load eagerly.
+//
+// It lives at the project root, not inside an overlay folder, for the same
+// reason the machine-wide config lives outside the store: settings must not
+// travel with the content they configure. A user may move their local rules from
+// .contour/ to .agents/ for broader tool support; the config stays put and keeps
+// working.
 package project
 
 import (
@@ -15,11 +20,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ConfigFileName is the config file contour looks for inside an overlay folder.
-const ConfigFileName = "config.yaml"
+// FileName is the project config file, at the project root.
+const FileName = ".contour.yaml"
 
-// Config is a project's contour config, read from the first recognised overlay
-// folder that holds a config file.
+// Config is a project's contour config.
 type Config struct {
 	// Bootstrap is the central profile to load eagerly, unless the --bootstrap
 	// flag overrides it.
@@ -38,58 +42,39 @@ type file struct {
 	EagerFiles []string `yaml:"eager_files"`
 }
 
-// Load reads the project config from the first recognised overlay folder under
-// projectDir (in store.OverlayDirNames order) that contains a config file. A
-// missing config is not an error; it returns a zero Config.
+// Load reads the project config from .contour.yaml at projectDir. A missing
+// config is not an error; it returns a zero Config.
 func Load(projectDir string) (Config, error) {
-	for _, name := range store.OverlayDirNames {
-		path := filepath.Join(projectDir, name, ConfigFileName)
-		data, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return Config{}, fmt.Errorf("read %s: %w", path, err)
-		}
+	path := filepath.Join(projectDir, FileName)
 
-		var f file
-		if err := yaml.Unmarshal(data, &f); err != nil {
-			return Config{}, fmt.Errorf("parse %s: %w", path, err)
-		}
-		return Config{
-			Bootstrap:  strings.TrimSpace(f.Bootstrap),
-			EagerFiles: resolveEagerFiles(projectDir, f.EagerFiles),
-			Path:       path,
-		}, nil
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Config{}, nil
 	}
-	return Config{}, nil
+	if err != nil {
+		return Config{}, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var f file
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return Config{
+		Bootstrap:  strings.TrimSpace(f.Bootstrap),
+		EagerFiles: resolveEagerFiles(projectDir, f.EagerFiles),
+		Path:       path,
+	}, nil
 }
 
-// Write creates or overwrites the project config with a bootstrap profile and a
-// list of eager files. It is placed in the first existing overlay folder under
-// projectDir, or .contour/ if none exists yet, and returns the path written.
-// The file is rendered from a template so it documents its own fields.
+// Write creates or overwrites the project config at projectDir with a bootstrap
+// profile and a list of eager files, returning the path written. The file is
+// rendered from a template so it documents its own fields.
 func Write(projectDir, bootstrap string, eagerFiles []string) (string, error) {
-	dir := writeDir(projectDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create %s: %w", dir, err)
-	}
-	path := filepath.Join(dir, ConfigFileName)
+	path := filepath.Join(projectDir, FileName)
 	if err := os.WriteFile(path, render(bootstrap, eagerFiles), 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
 	return path, nil
-}
-
-// writeDir picks where a new project config goes: an overlay folder the project
-// already uses, or .contour/ as the default.
-func writeDir(projectDir string) string {
-	for _, name := range store.OverlayDirNames {
-		if info, err := os.Stat(filepath.Join(projectDir, name)); err == nil && info.IsDir() {
-			return filepath.Join(projectDir, name)
-		}
-	}
-	return filepath.Join(projectDir, store.OverlayDirNames[0])
 }
 
 func render(bootstrap string, eagerFiles []string) []byte {
@@ -97,8 +82,10 @@ func render(bootstrap string, eagerFiles []string) []byte {
 
 	b.WriteString("# contour project config\n")
 	b.WriteString("#\n")
-	b.WriteString("# Per-project settings, read from the first of .contour/, .agents/ or\n")
-	b.WriteString("# .claude/ that holds this file. Commit it so your team shares the setup.\n")
+	b.WriteString("# Per-project settings, at the project root so they are independent of which\n")
+	b.WriteString("# overlay folder (.contour/, .agents/ or .claude/) holds your local rules —\n")
+	b.WriteString("# move those between folders freely without losing this. Commit it so your\n")
+	b.WriteString("# team shares the setup.\n")
 	b.WriteString("\n")
 	b.WriteString("# bootstrap: the central store profile whose rules load eagerly here.\n")
 	b.WriteString("#   The --bootstrap flag to `contour mcp` overrides it.\n")
