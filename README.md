@@ -32,6 +32,11 @@ Write a rule once; every project and every session can reach it.
     - [Rules, knowledge and skills](#rules-knowledge-and-skills)
     - [Bootstrap profiles](#bootstrap-profiles)
   - [Bootstrap profiles](#bootstrap-profiles-1)
+  - [Project-specific context](#project-specific-context)
+    - [Overlay folders](#overlay-folders)
+    - [Local wins on conflict](#local-wins-on-conflict)
+    - [Single files (CLAUDE.md, AGENTS.md)](#single-files-claudemd-agentsmd)
+    - [Gradual migration](#gradual-migration)
   - [CLI reference](#cli-reference)
   - [Using contour with Claude Code](#using-contour-with-claude-code)
     - [Wiring it up](#wiring-it-up)
@@ -312,6 +317,62 @@ than silently sending less than you expected, which catches typos.
 
 ---
 
+## Project-specific context
+
+Not everything belongs in the central store. Some rules and knowledge are true only for one project, and a project should carry its own context rather than scatter it into a shared store. So contour layers **project-local context on top of the central store**, and lets you migrate between the two at your own pace.
+
+### Overlay folders
+
+In a project, contour looks for an overlay folder — any of `.contour/`, `.agents/` or `.claude/` — with the same `rules/`, `skills/` and `knowledge/` layout as the store:
+
+```
+my-project/
+├── .contour/
+│   ├── rules/
+│   │   └── 010-logging.md          ← always eager for this project
+│   └── skills/
+│       └── deploy/
+│           └── SKILL.md
+└── ...
+```
+
+Three folder names, because teams already keep agent context in different places; contour reads whichever you use (and unions them if you have more than one). It only looks at the `rules/`, `skills/` and `knowledge/` inside — anything else in the folder is left alone, so it sits happily beside another tool's config.
+
+Overlay items are **always active** for the project: local rules load eagerly, local skills and knowledge join the on-demand menu, no tags needed. Being local is scope enough.
+
+### Local wins on conflict
+
+When a local item and a central one clash, the local one is authoritative. contour states this to the agent rather than trying to detect clashes itself, so it covers semantic conflicts too:
+
+```
+# Rules                                     (from your central store)
+...
+# Project rules (local — authoritative on conflict)
+...
+```
+
+An identical path in both places (say `rules/python/errors.md` locally and in the store) resolves to the local one. Everything is labelled by source in `contour list`, so you always know where a rule came from.
+
+### Single files (CLAUDE.md, AGENTS.md)
+
+If you already keep a `CLAUDE.md` or `AGENTS.md`, you don't have to restructure it. List it in the project config and contour loads it eagerly as a project rule:
+
+```yaml
+# .contour/config.yaml
+bootstrap: python              # the central profile for this project
+eager_files:
+  - AGENTS.md
+  - docs/architecture.md
+```
+
+`contour mcp-init` writes this file for you and detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
+
+### Gradual migration
+
+This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a few overlay rules — and move the reusable pieces into the central store one at a time, as you notice them repeating across projects. During a move the local copy wins, so nothing changes until you delete it and the store version takes over. You can adopt contour with no central store at all and grow into it.
+
+---
+
 ## CLI reference
 
 | Command | Purpose |
@@ -324,7 +385,7 @@ than silently sending less than you expected, which catches typos.
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
-| `contour mcp-init` | Register contour in this project's `.mcp.json`, creating or updating it. Records contour's absolute path so an agent can launch it. |
+| `contour mcp-init` | Set the project up: register contour in `.mcp.json` (absolute path, bare `mcp`) and write `.contour/config.yaml` with the profile, detecting a root `AGENTS.md`/`CLAUDE.md`. |
 | `contour stats` | Show how agents have used the store: gaps (searched, found nothing), never-fetched items, and most-fetched. Local only; `--project`, `--days`, `--clear`. |
 | `contour version` | Print the version. |
 
@@ -380,18 +441,20 @@ From your project root:
 contour mcp-init --bootstrap python
 ```
 
-That writes `.mcp.json`, or adds contour to the one you already have — other
-servers in the file are left exactly as they were. Commit it and everyone on the
+That does two things: registers contour in `.mcp.json` (or adds it to the one
+you already have, leaving other servers untouched), and writes a
+`.contour/config.yaml` recording the profile. Commit both and everyone on the
 project gets the same context.
 
-The result looks like this:
+The `.mcp.json` entry is a bare launch line — the profile lives in the project
+config, not the arguments:
 
 ```json
 {
   "mcpServers": {
     "contour": {
       "command": "/opt/homebrew/bin/contour",
-      "args": ["mcp", "--bootstrap", "python"]
+      "args": ["mcp"]
     }
   }
 }
@@ -408,28 +471,40 @@ It records the symlink (`/opt/homebrew/bin/contour`), never the versioned target
 underneath it (`/opt/homebrew/Cellar/contour/0.2.0/...`), so the entry keeps
 working after `brew upgrade`.
 
-Nothing else needs configuring, even if your store is somewhere custom: contour
-reads its location from `~/.contour/config.yaml`, so wherever `contour set-home`
-put it is where the server reads from.
+The profile and any eager files come from `.contour/config.yaml` (see
+[Project-specific context](#project-specific-context)), so nothing project-specific
+is baked into the launch arguments. And nothing else needs configuring even if
+your store is somewhere custom: contour reads its location from
+`~/.contour/config.yaml`, so wherever `contour set-home` put it is where the
+server reads from.
 
 <details>
-<summary>Writing the file by hand</summary>
+<summary>Writing the files by hand</summary>
 
 `mcp-init` is a convenience, not a requirement. If you write `.mcp.json`
 yourself, use the absolute path to the binary — `which contour` will tell you —
-for the reason above. `claude mcp add` works too:
+for the reason above, and a bare `mcp` argument. `claude mcp add` works too:
 
 ```bash
-claude mcp add contour -- $(which contour) mcp --bootstrap python
+claude mcp add contour -- $(which contour) mcp
 ```
+
+Then set the profile in `.contour/config.yaml` with `bootstrap: <name>`.
 
 </details>
 
 ### Choosing the profile
 
-Pick the profile per project with `--bootstrap <name>`, as in the `args` above. It belongs in the project's own MCP config rather than in contour's config file, because the right profile depends on the project, not on the machine.
+The profile lives in the project config, so it travels with the project:
 
-Started without one, the server still serves the whole store through its tools, and its instructions explain how to select an entry point — a missing profile degrades gracefully rather than failing.
+```yaml
+# .contour/config.yaml
+bootstrap: python
+```
+
+`contour mcp-init --bootstrap <name>` writes that for you. The `--bootstrap` flag on `contour mcp` overrides it if you ever need to. It belongs with the project rather than in the machine-wide config because the right profile depends on the project, not the machine.
+
+Started without one, the server still serves the whole store through its tools, and its instructions explain how to select an entry point — a missing profile degrades gracefully rather than failing. Any project overlay rules still load, so a project can rely on local context alone.
 
 ### What the agent gets
 
