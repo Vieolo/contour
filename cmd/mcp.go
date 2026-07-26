@@ -36,16 +36,24 @@ var mcpCmd = &cobra.Command{
 			return err
 		}
 
+		// The --bootstrap flag wins; otherwise the project config chooses the
+		// profile, so it can live with the project instead of in .mcp.json.
+		overlays, eagerFiles, cfgBootstrap := projectContext()
+		profile := mcpBootstrap
+		if profile == "" {
+			profile = cfgBootstrap
+		}
+
 		if config.Dev {
 			fmt.Fprintf(os.Stderr, "[%s build] contour mcp: store=%s profile=%q\n",
-				config.Label, home.Path, mcpBootstrap)
+				config.Label, home.Path, profile)
 		}
 
 		// Open the session's usage log, if enabled. It is best-effort: a failure
 		// to open (or a disabled toggle) leaves mcpUsage nil, and its nil-safe
 		// methods make the handlers no-op — logging never blocks serving.
 		if enabled, err := config.UsageLoggingEnabled(); err == nil && enabled {
-			if logger, err := usage.Open(mcpBootstrap); err != nil {
+			if logger, err := usage.Open(profile); err != nil {
 				fmt.Fprintf(os.Stderr, "contour: usage logging off (%v)\n", err)
 			} else {
 				mcpUsage = logger
@@ -54,10 +62,11 @@ var mcpCmd = &cobra.Command{
 		}
 
 		server, err := mcpserver.New(mcpserver.Options{
-			Root:     home.Path,
-			Overlays: projectOverlays(),
-			Profile:  mcpBootstrap,
-			Version:  cliVersion(),
+			Root:       home.Path,
+			Overlays:   overlays,
+			EagerFiles: eagerFiles,
+			Profile:    profile,
+			Version:    cliVersion(),
 		})
 		if err != nil {
 			return err

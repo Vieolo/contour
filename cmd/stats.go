@@ -77,6 +77,9 @@ func neverFetchedItems(report *usage.Report) ([]store.Item, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Central store only, deliberately not layered: "never fetched" is about
+	// curating the store you maintain, and stats aggregates across every
+	// project, so no single project's overlay belongs here.
 	st, err := store.Load(home.Path)
 	if err != nil {
 		return nil, err

@@ -9,7 +9,6 @@ import (
 	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/mcpserver"
 	"github.com/vieolo/contour/internal/render"
-	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/contour/internal/unic"
 )
 
@@ -51,7 +50,11 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 		if len(args) == 1 {
 			kind = args[0]
 		}
-		st, kinds, err := store.LoadForKindLayered(home.Path, projectOverlays(), kind)
+		st, err := loadProjectStore(home.Path)
+		if err != nil {
+			return err
+		}
+		kinds, err := resolveKinds(kind)
 		if err != nil {
 			return err
 		}
@@ -68,7 +71,11 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 		if err != nil {
 			return nil, listResult{}, asToolError(err)
 		}
-		st, kinds, err := store.LoadForKindLayered(home.Path, projectOverlays(), in.Kind)
+		st, err := loadProjectStore(home.Path)
+		if err != nil {
+			return nil, listResult{}, asToolError(err)
+		}
+		kinds, err := resolveKinds(in.Kind)
 		if err != nil {
 			return nil, listResult{}, asToolError(err)
 		}

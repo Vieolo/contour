@@ -23,17 +23,30 @@ type Store struct {
 // other tools.
 var OverlayDirNames = []string{".contour", ".agents", ".claude"}
 
-// Load reads the central store at root.
-func Load(root string) (*Store, error) {
-	return LoadLayered(root)
+// EagerFile is a file listed in a project config to be loaded eagerly as a local
+// rule — a CLAUDE.md or AGENTS.md a project already keeps, without restructuring
+// it into the rules/ layout.
+type EagerFile struct {
+	ID   string // how it appears, e.g. "AGENTS.md"
+	Path string // absolute path to read
 }
 
-// LoadLayered reads the central store, then merges each overlay over it in
-// order. Overlay items are marked OriginLocal; on an identical ID a later source
-// wins, so a local item overrides a central one (and a later overlay an earlier
-// one).
+// Load reads the central store at root.
+func Load(root string) (*Store, error) {
+	return LoadProject(root, nil, nil)
+}
+
+// LoadLayered reads the central store, then merges each overlay over it.
 func LoadLayered(central string, overlays ...string) (*Store, error) {
-	groups := make([][]Item, 0, len(overlays)+1)
+	return LoadProject(central, overlays, nil)
+}
+
+// LoadProject reads the central store, merges each overlay over it, and loads
+// any listed eager files as local rules. Items are added in order and a later
+// source wins on an identical ID, so overlays override the store and eager files
+// override both.
+func LoadProject(central string, overlays []string, eagerFiles []EagerFile) (*Store, error) {
+	groups := make([][]Item, 0, len(overlays)+2)
 
 	storeItems, err := loadItems(central, OriginStore)
 	if err != nil {
@@ -49,19 +62,20 @@ func LoadLayered(central string, overlays ...string) (*Store, error) {
 		groups = append(groups, localItems)
 	}
 
+	fileItems, err := loadEagerFileItems(eagerFiles)
+	if err != nil {
+		return nil, err
+	}
+	groups = append(groups, fileItems)
+
 	return build(central, groups), nil
 }
 
-// LoadForKind loads the central store and resolves an optional kind filter.
+// LoadForKind loads the central store and resolves an optional kind filter. An
+// empty kind selects every kind, so a user-supplied value can be passed straight
+// through.
 func LoadForKind(root, kind string) (*Store, []Kind, error) {
-	return LoadForKindLayered(root, nil, kind)
-}
-
-// LoadForKindLayered loads the central store plus overlays and resolves an
-// optional kind filter. An empty kind selects every kind, so a user-supplied
-// value can be passed straight through from either surface.
-func LoadForKindLayered(central string, overlays []string, kind string) (*Store, []Kind, error) {
-	st, err := LoadLayered(central, overlays...)
+	st, err := Load(root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -174,6 +188,37 @@ type loader struct {
 	root   string
 	origin Origin
 	items  []Item
+}
+
+// loadEagerFileItems reads each listed file as a local rule item. A listed file
+// that no longer exists is skipped rather than failing the whole load — a
+// project config can outlive a file it names.
+func loadEagerFileItems(files []EagerFile) ([]Item, error) {
+	var items []Item
+	for _, f := range files {
+		content, err := os.ReadFile(f.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s: %w", f.Path, err)
+		}
+		fm, body, err := parseItemFile(content)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", f.Path, err)
+		}
+		items = append(items, Item{
+			Kind:        KindRules,
+			Source:      OriginLocal,
+			ID:          f.ID,
+			Name:        pathBase(f.ID),
+			Path:        f.Path,
+			Description: fm.Description,
+			Tags:        fm.Tags,
+			Body:        body,
+		})
+	}
+	return items, nil
 }
 
 func loadItems(root string, origin Origin) ([]Item, error) {

@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/mcpconfig"
+	"github.com/vieolo/contour/internal/project"
 	"github.com/vieolo/termange"
 )
 
@@ -17,19 +19,23 @@ var (
 	mcpInitName    string
 )
 
+// commonAgentFiles are the single-file conventions mcp-init offers to load
+// eagerly, so a project that already keeps one need not restructure it.
+var commonAgentFiles = []string{"AGENTS.md", "AGENT.md", "CLAUDE.md"}
+
 var mcpInitCmd = &cobra.Command{
 	Use:   "mcp-init",
 	Short: "Register contour as an MCP server in this project",
-	Long: "Write this project's MCP config so an agent starts contour for you, " +
-		"creating " + mcpconfig.DefaultFile + " or adding contour to the one " +
-		"already there. Other servers in the file are left untouched.\n\n" +
-		"The entry records contour's absolute path rather than the bare command " +
-		"name. An agent launches its servers without a login shell, so it does " +
-		"not get the PATH that would resolve `contour` — a Homebrew install " +
-		"lives outside the system default PATH entirely.\n\n" +
-		"Pass --bootstrap to pin the profile whose rules load at the start of " +
-		"every session in this project. The profile is checked against your " +
-		"store, so a typo is caught here rather than at session start.",
+	Long: "Set this project up for contour: write the MCP config so an agent " +
+		"starts contour, and a project config that pins the profile and lists any " +
+		"files to load eagerly.\n\n" +
+		"The MCP entry (in " + mcpconfig.DefaultFile + ") records contour's " +
+		"absolute path — an agent launches its servers without a login shell, so a " +
+		"bare `contour` would not resolve — and a bare `mcp` command, because the " +
+		"profile now lives in the project config rather than the launch arguments.\n\n" +
+		"Pass --bootstrap to set the profile. Any AGENTS.md or CLAUDE.md at the " +
+		"project root is detected and listed for eager loading; edit the config to " +
+		"change that.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// The path contour was launched from. Deliberately not resolved through
@@ -39,18 +45,30 @@ var mcpInitCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("determine contour's own path: %w", err)
 		}
-
-		serverArgs := []string{"mcp"}
 		if mcpInitProfile != "" {
 			if err := checkProfileExists(mcpInitProfile); err != nil {
 				return err
 			}
-			serverArgs = append(serverArgs, "--bootstrap", mcpInitProfile)
 		}
 
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("determine the working directory: %w", err)
+		}
+		eager := detectEagerFiles(cwd)
+
+		// 1. The project config carries the profile and eager files, so the
+		//    settings live with the project and .mcp.json stays a bare launch.
+		cfgPath, err := project.Write(cwd, mcpInitProfile, eager)
+		if err != nil {
+			return err
+		}
+
+		// 2. Register the server with a bare `mcp`; the profile comes from the
+		//    config written above.
 		replaced, err := mcpconfig.Upsert(mcpInitFile, mcpInitName, mcpconfig.Entry{
 			Command: exe,
-			Args:    serverArgs,
+			Args:    []string{"mcp"},
 		})
 		if err != nil {
 			return err
@@ -62,12 +80,15 @@ var mcpInitCmd = &cobra.Command{
 			termange.PrintSuccessf("Added the %q server to %s\n", mcpInitName, mcpInitFile)
 		}
 		termange.PrintInfof("  command: %s\n", exe)
-
-		if mcpInitProfile == "" {
-			termange.PrintWarningln("\nNo bootstrap profile pinned, so no rules load automatically.")
-			termange.PrintWarningf("Re-run with --bootstrap <name> to choose one (%s bootstrap lists them).\n", config.Program)
-		} else {
+		termange.PrintInfof("  config:  %s\n", cfgPath)
+		if mcpInitProfile != "" {
 			termange.PrintInfof("  profile: %s\n", mcpInitProfile)
+		}
+		for _, f := range eager {
+			termange.PrintInfof("  eager:   %s (detected)\n", f)
+		}
+		if mcpInitProfile == "" {
+			termange.PrintWarningf("\nNo profile set — add `bootstrap: <name>` to %s (%s bootstrap lists them).\n", cfgPath, config.Program)
 		}
 		return nil
 	},
@@ -75,12 +96,25 @@ var mcpInitCmd = &cobra.Command{
 
 func init() {
 	mcpInitCmd.Flags().StringVar(&mcpInitProfile, "bootstrap", "",
-		"bootstrap profile whose rules load eagerly in this project")
+		"bootstrap profile to record in the project config")
 	mcpInitCmd.Flags().StringVar(&mcpInitFile, "file", mcpconfig.DefaultFile,
 		"MCP config file to create or update")
 	mcpInitCmd.Flags().StringVar(&mcpInitName, "name", config.Program,
 		"name to register the server under")
 	rootCmd.AddCommand(mcpInitCmd)
+}
+
+// detectEagerFiles finds common agent-instruction files at the project root, so
+// mcp-init can list them for eager loading rather than making the user restate
+// what they already keep.
+func detectEagerFiles(projectDir string) []string {
+	var found []string
+	for _, name := range commonAgentFiles {
+		if info, err := os.Stat(filepath.Join(projectDir, name)); err == nil && !info.IsDir() {
+			found = append(found, name)
+		}
+	}
+	return found
 }
 
 // checkProfileExists rejects an unknown profile now rather than leaving the

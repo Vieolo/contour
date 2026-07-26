@@ -74,6 +74,44 @@ func TestLoadUnlayeredIsStoreSourced(t *testing.T) {
 	}
 }
 
+func TestLoadProjectEagerFilesAsLocalRules(t *testing.T) {
+	central := t.TempDir()
+	proj := t.TempDir()
+	write(t, central, "rules/python/010-errors.md", "central body")
+	// A plain file (no frontmatter) plus one with frontmatter.
+	write(t, proj, "AGENTS.md", "# Agent instructions\nDo the thing.")
+	write(t, proj, "docs/arch.md", "---\ndescription: architecture\n---\nlayers and boundaries")
+
+	eager := []EagerFile{
+		{ID: "AGENTS.md", Path: filepath.Join(proj, "AGENTS.md")},
+		{ID: "docs/arch.md", Path: filepath.Join(proj, "docs", "arch.md")},
+		{ID: "missing.md", Path: filepath.Join(proj, "missing.md")}, // must be skipped
+	}
+
+	st, err := LoadProject(central, nil, eager)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	agents, ok := st.Get("AGENTS.md")
+	if !ok {
+		t.Fatal("AGENTS.md not loaded as an item")
+	}
+	if agents.Source != OriginLocal || agents.Kind != KindRules {
+		t.Errorf("AGENTS.md source/kind = %v/%v, want local/rules", agents.Source, agents.Kind)
+	}
+	if agents.Body != "# Agent instructions\nDo the thing." {
+		t.Errorf("AGENTS.md body = %q", agents.Body)
+	}
+	arch, _ := st.Get("docs/arch.md")
+	if arch.Description != "architecture" {
+		t.Errorf("frontmatter not parsed: description = %q", arch.Description)
+	}
+	if _, ok := st.Get("missing.md"); ok {
+		t.Error("a listed-but-missing eager file was loaded, want skipped")
+	}
+}
+
 func TestDiscoverOverlays(t *testing.T) {
 	project := t.TempDir()
 	// Two of the three recognised folders present.

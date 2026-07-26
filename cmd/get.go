@@ -71,7 +71,7 @@ func lookupItem(id string) (item store.Item, found bool, err error) {
 	if err != nil {
 		return store.Item{}, false, err
 	}
-	st, err := store.LoadLayered(home.Path, projectOverlays()...)
+	st, err := loadProjectStore(home.Path)
 	if err != nil {
 		return store.Item{}, false, err
 	}

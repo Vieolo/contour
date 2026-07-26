@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/config"
-	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/termange"
 )
 
@@ -36,7 +35,7 @@ var bootstrapCmd = &cobra.Command{
 		if err != nil {
 			return withAvailableProfiles(home.Path, err)
 		}
-		st, err := store.LoadLayered(home.Path, projectOverlays()...)
+		st, err := loadProjectStore(home.Path)
 		if err != nil {
 			return err
 		}

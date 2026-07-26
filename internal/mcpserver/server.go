@@ -32,6 +32,10 @@ type Options struct {
 	// items are always active for this project.
 	Overlays []string
 
+	// EagerFiles are single files (e.g. AGENTS.md) loaded eagerly as local
+	// rules, from the project config.
+	EagerFiles []store.EagerFile
+
 	// Profile is the bootstrap profile loaded eagerly. When empty no central
 	// rules are preloaded (local overlay rules still are), and the instructions
 	// explain how to select one.
@@ -89,7 +93,7 @@ func TextResult(text, fallback string) *mcp.CallToolResult {
 // BuildInstructions composes what the client receives at initialisation: a short
 // preamble, the profile's eager rules, and menus of what can be fetched.
 func BuildInstructions(opts Options) (string, error) {
-	st, err := store.LoadLayered(opts.Root, opts.Overlays...)
+	st, err := store.LoadProject(opts.Root, opts.Overlays, opts.EagerFiles)
 	if err != nil {
 		return "", err
 	}
