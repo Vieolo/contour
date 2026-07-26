@@ -54,9 +54,10 @@ var mcpCmd = &cobra.Command{
 		}
 
 		server, err := mcpserver.New(mcpserver.Options{
-			Root:    home.Path,
-			Profile: mcpBootstrap,
-			Version: cliVersion(),
+			Root:     home.Path,
+			Overlays: projectOverlays(),
+			Profile:  mcpBootstrap,
+			Version:  cliVersion(),
 		})
 		if err != nil {
 			return err

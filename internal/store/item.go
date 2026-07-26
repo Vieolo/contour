@@ -2,12 +2,28 @@ package store
 
 import "strings"
 
+// Origin records where an item came from.
+type Origin string
+
+const (
+	// OriginStore is the central store (~/contour by default).
+	OriginStore Origin = "store"
+	// OriginLocal is a project overlay found in the working directory. Local
+	// items apply unconditionally to their project and take precedence over
+	// central ones on conflict.
+	OriginLocal Origin = "local"
+)
+
 // Item is a single unit of content in the store: one rule, skill or knowledge
 // entry. Items are produced by Load and served to agents through the CLI and
 // the MCP server.
 type Item struct {
 	// Kind is the category the item belongs to.
 	Kind Kind
+
+	// Source records whether the item comes from the central store or a project
+	// overlay.
+	Source Origin
 
 	// ID is the item's stable identifier: its path relative to the store root,
 	// slash-separated and without the file extension (e.g. "rules/python/errors").

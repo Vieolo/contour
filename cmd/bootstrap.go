@@ -36,7 +36,7 @@ var bootstrapCmd = &cobra.Command{
 		if err != nil {
 			return withAvailableProfiles(home.Path, err)
 		}
-		st, err := store.Load(home.Path)
+		st, err := store.LoadLayered(home.Path, projectOverlays()...)
 		if err != nil {
 			return err
 		}

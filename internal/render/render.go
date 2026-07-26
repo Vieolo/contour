@@ -255,9 +255,14 @@ file at rules/python/errors.md is tagged "python". Sample files are included;
 edit or delete them freely, and see README.md in the store for the conventions.
 `
 
-// item renders a single item: ID, description and tags.
+// item renders a single item: ID, description and tags, marking local overlay
+// items so their origin is visible.
 func item(it store.Item) {
-	termange.PrintInfof("  %s\n", it.ID)
+	suffix := ""
+	if it.Source == store.OriginLocal {
+		suffix = "  (local)"
+	}
+	termange.PrintInfof("  %s%s\n", it.ID, suffix)
 	if it.Description != "" {
 		termange.PrintInfof("      %s\n", it.Description)
 	}

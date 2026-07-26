@@ -28,8 +28,13 @@ type Options struct {
 	// Root is the contour store's directory.
 	Root string
 
-	// Profile is the bootstrap profile loaded eagerly. When empty no rules are
-	// preloaded, and the instructions explain how to select one.
+	// Overlays are the project-local directories layered over the store, whose
+	// items are always active for this project.
+	Overlays []string
+
+	// Profile is the bootstrap profile loaded eagerly. When empty no central
+	// rules are preloaded (local overlay rules still are), and the instructions
+	// explain how to select one.
 	Profile string
 
 	// Version is reported to clients during initialisation.
@@ -84,7 +89,7 @@ func TextResult(text, fallback string) *mcp.CallToolResult {
 // BuildInstructions composes what the client receives at initialisation: a short
 // preamble, the profile's eager rules, and menus of what can be fetched.
 func BuildInstructions(opts Options) (string, error) {
-	st, err := store.Load(opts.Root)
+	st, err := store.LoadLayered(opts.Root, opts.Overlays...)
 	if err != nil {
 		return "", err
 	}
@@ -95,9 +100,13 @@ func BuildInstructions(opts Options) (string, error) {
 
 	if opts.Profile == "" {
 		writeNoProfileNotice(&b, opts.Root)
-		for _, k := range store.Kinds {
-			b.WriteString(bootstrap.RenderMenu("Available "+string(k), st.ByKind(k), fetchHint))
-		}
+		// Local project rules still apply without a central profile.
+		b.WriteString(bootstrap.RenderLocalRules(st.BySource(store.KindRules, store.OriginLocal)))
+		// Central rules aren't eager here, but they remain fetchable, so list
+		// them alongside the on-demand skills and knowledge.
+		b.WriteString(bootstrap.RenderMenu("Available rules", st.BySource(store.KindRules, store.OriginStore), fetchHint))
+		b.WriteString(bootstrap.RenderMenu("Available skills", st.ByKind(store.KindSkills), fetchHint))
+		b.WriteString(bootstrap.RenderMenu("Available knowledge", st.ByKind(store.KindKnowledge), fetchHint))
 		return strings.TrimRight(b.String(), "\n") + "\n", nil
 	}
 

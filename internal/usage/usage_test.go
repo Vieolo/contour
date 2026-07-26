@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vieolo/contour/internal/config"
 )
 
 func TestProjectGroupStableReadableUnique(t *testing.T) {
@@ -56,8 +58,13 @@ func TestLoggerWritesSelfContainedJSONL(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// One session file, under a per-project directory in ~/.contour/usage.
-	files, err := filepath.Glob(filepath.Join(home, ".contour", "usage", "*", "*.jsonl"))
+	// One session file, under a per-project directory in the usage dir (which is
+	// usage-dev under a dev build, so ask config rather than assume).
+	usageDir, err := config.UsageDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := filepath.Glob(filepath.Join(usageDir, "*", "*.jsonl"))
 	if err != nil || len(files) != 1 {
 		t.Fatalf("want exactly one session file, got %v (err %v)", files, err)
 	}

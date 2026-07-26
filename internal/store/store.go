@@ -8,33 +8,60 @@ import (
 	"strings"
 )
 
-// Store is an in-memory index of every item in a contour store, loaded once
-// from disk. Its exported read methods are safe for concurrent use.
+// Store is an in-memory index of the items from a central store and any project
+// overlays layered over it. Its exported read methods are safe for concurrent
+// use.
 type Store struct {
 	root  string
 	items []Item
 	byID  map[string]int
 }
 
-// Load reads every rule, skill and knowledge item under root into memory.
-// Items are ordered deterministically: by kind (rules, skills, knowledge), then
-// lexicographically by path within each kind. A kind directory that does not
-// exist simply contributes no items.
+// OverlayDirNames are the project-local folders contour recognises in the
+// working directory. Any that exist are merged over the central store, so a
+// project can carry its own rules alongside the ones people already keep for
+// other tools.
+var OverlayDirNames = []string{".contour", ".agents", ".claude"}
+
+// Load reads the central store at root.
 func Load(root string) (*Store, error) {
-	s := &Store{root: root, byID: make(map[string]int)}
-	for _, kind := range Kinds {
-		if err := s.loadKind(kind); err != nil {
-			return nil, err
-		}
-	}
-	return s, nil
+	return LoadLayered(root)
 }
 
-// LoadForKind loads the store and resolves an optional kind filter. An empty
-// kind selects every kind, so a user-supplied value can be passed straight
-// through from either surface.
+// LoadLayered reads the central store, then merges each overlay over it in
+// order. Overlay items are marked OriginLocal; on an identical ID a later source
+// wins, so a local item overrides a central one (and a later overlay an earlier
+// one).
+func LoadLayered(central string, overlays ...string) (*Store, error) {
+	groups := make([][]Item, 0, len(overlays)+1)
+
+	storeItems, err := loadItems(central, OriginStore)
+	if err != nil {
+		return nil, err
+	}
+	groups = append(groups, storeItems)
+
+	for _, ov := range overlays {
+		localItems, err := loadItems(ov, OriginLocal)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, localItems)
+	}
+
+	return build(central, groups), nil
+}
+
+// LoadForKind loads the central store and resolves an optional kind filter.
 func LoadForKind(root, kind string) (*Store, []Kind, error) {
-	st, err := Load(root)
+	return LoadForKindLayered(root, nil, kind)
+}
+
+// LoadForKindLayered loads the central store plus overlays and resolves an
+// optional kind filter. An empty kind selects every kind, so a user-supplied
+// value can be passed straight through from either surface.
+func LoadForKindLayered(central string, overlays []string, kind string) (*Store, []Kind, error) {
+	st, err := LoadLayered(central, overlays...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -49,7 +76,20 @@ func LoadForKind(root, kind string) (*Store, []Kind, error) {
 	return st, []Kind{k}, nil
 }
 
-// Root returns the store's root directory.
+// DiscoverOverlays returns the recognised overlay directories that exist under
+// projectDir, in OverlayDirNames order.
+func DiscoverOverlays(projectDir string) []string {
+	var out []string
+	for _, name := range OverlayDirNames {
+		p := filepath.Join(projectDir, name)
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Root returns the central store's directory.
 func (s *Store) Root() string { return s.root }
 
 // All returns every item in load order.
@@ -60,6 +100,17 @@ func (s *Store) ByKind(kind Kind) []Item {
 	var out []Item
 	for _, it := range s.items {
 		if it.Kind == kind {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// BySource returns the items of a kind from a single origin, in load order.
+func (s *Store) BySource(kind Kind, origin Origin) []Item {
+	var out []Item
+	for _, it := range s.items {
+		if it.Kind == kind && it.Source == origin {
 			out = append(out, it)
 		}
 	}
@@ -98,8 +149,45 @@ func (s *Store) Get(id string) (Item, bool) {
 	return s.items[i], true
 }
 
-func (s *Store) loadKind(kind Kind) error {
-	kindRoot := filepath.Join(s.root, string(kind))
+// build assembles a Store from ordered item groups. Items are added in order;
+// on an ID already seen, the later item replaces the earlier one in place, so
+// overlay groups (passed after the store group) override the central store.
+func build(root string, groups [][]Item) *Store {
+	s := &Store{root: root, byID: make(map[string]int)}
+	for _, group := range groups {
+		for _, it := range group {
+			if idx, ok := s.byID[it.ID]; ok {
+				s.items[idx] = it
+				continue
+			}
+			s.byID[it.ID] = len(s.items)
+			s.items = append(s.items, it)
+		}
+	}
+	return s
+}
+
+// loader walks one root and produces its items, stamped with an origin. IDs are
+// relative to that root, so a local item and a central item are distinct unless
+// their paths are identical.
+type loader struct {
+	root   string
+	origin Origin
+	items  []Item
+}
+
+func loadItems(root string, origin Origin) ([]Item, error) {
+	l := &loader{root: root, origin: origin}
+	for _, kind := range Kinds {
+		if err := l.loadKind(kind); err != nil {
+			return nil, err
+		}
+	}
+	return l.items, nil
+}
+
+func (l *loader) loadKind(kind Kind) error {
+	kindRoot := filepath.Join(l.root, string(kind))
 	info, err := os.Stat(kindRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -112,13 +200,13 @@ func (s *Store) loadKind(kind Kind) error {
 	}
 
 	if kind == KindSkills {
-		return s.loadSkills(kindRoot)
+		return l.loadSkills(kindRoot)
 	}
-	return s.loadFiles(kind, kindRoot)
+	return l.loadFiles(kind, kindRoot)
 }
 
 // loadFiles loads the markdown files under a file-based kind (rules, knowledge).
-func (s *Store) loadFiles(kind Kind, kindRoot string) error {
+func (l *loader) loadFiles(kind Kind, kindRoot string) error {
 	return filepath.WalkDir(kindRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -127,18 +215,18 @@ func (s *Store) loadFiles(kind Kind, kindRoot string) error {
 			return nil
 		}
 
-		it, err := s.buildItem(kind, kindRoot, path, path, false)
+		it, err := l.buildItem(kind, kindRoot, path, path, false)
 		if err != nil {
 			return err
 		}
-		s.add(it)
+		l.items = append(l.items, it)
 		return nil
 	})
 }
 
 // loadSkills loads directory-based skills. A skill is any directory containing
 // a SKILL.md file; the walk does not descend into a skill's own directory.
-func (s *Store) loadSkills(kindRoot string) error {
+func (l *loader) loadSkills(kindRoot string) error {
 	return filepath.WalkDir(kindRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -152,19 +240,19 @@ func (s *Store) loadSkills(kindRoot string) error {
 			return nil // not a skill directory; keep descending
 		}
 
-		it, err := s.buildItem(KindSkills, kindRoot, path, skillFile, true)
+		it, err := l.buildItem(KindSkills, kindRoot, path, skillFile, true)
 		if err != nil {
 			return err
 		}
-		s.add(it)
+		l.items = append(l.items, it)
 		return filepath.SkipDir // don't descend into the skill's internals
 	})
 }
 
-// buildItem parses contentPath and assembles an Item. idPath is the path used
-// to derive the ID and implicit tags (the file itself for file kinds, the skill
+// buildItem parses contentPath and assembles an Item. idPath is the path used to
+// derive the ID and implicit tags (the file itself for file kinds, the skill
 // directory for skills); isDir reports whether idPath is a directory.
-func (s *Store) buildItem(kind Kind, kindRoot, idPath, contentPath string, isDir bool) (Item, error) {
+func (l *loader) buildItem(kind Kind, kindRoot, idPath, contentPath string, isDir bool) (Item, error) {
 	content, err := os.ReadFile(contentPath)
 	if err != nil {
 		return Item{}, fmt.Errorf("read %s: %w", contentPath, err)
@@ -174,9 +262,10 @@ func (s *Store) buildItem(kind Kind, kindRoot, idPath, contentPath string, isDir
 		return Item{}, fmt.Errorf("parse %s: %w", contentPath, err)
 	}
 
-	id := s.idFor(idPath, isDir)
+	id := idFor(l.root, idPath, isDir)
 	return Item{
 		Kind:        kind,
+		Source:      l.origin,
 		ID:          id,
 		Name:        pathBase(id),
 		Path:        contentPath,
@@ -186,15 +275,10 @@ func (s *Store) buildItem(kind Kind, kindRoot, idPath, contentPath string, isDir
 	}, nil
 }
 
-func (s *Store) add(it Item) {
-	s.byID[it.ID] = len(s.items)
-	s.items = append(s.items, it)
-}
-
-// idFor returns the store-root-relative, slash-separated ID for a path,
-// dropping the markdown extension for files.
-func (s *Store) idFor(path string, isDir bool) string {
-	rel, err := filepath.Rel(s.root, path)
+// idFor returns the root-relative, slash-separated ID for a path, dropping the
+// markdown extension for files.
+func idFor(root, path string, isDir bool) string {
+	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		rel = path
 	}

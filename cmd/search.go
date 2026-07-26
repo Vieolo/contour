@@ -72,7 +72,7 @@ var searchCmd = unic.UniversalCommand[searchInput, searchResult]{
 		if len(args) == 2 {
 			kind = args[1]
 		}
-		st, kinds, err := store.LoadForKind(home.Path, kind)
+		st, kinds, err := store.LoadForKindLayered(home.Path, projectOverlays(), kind)
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ var searchCmd = unic.UniversalCommand[searchInput, searchResult]{
 		if err != nil {
 			return nil, searchResult{}, asToolError(err)
 		}
-		st, kinds, err := store.LoadForKind(home.Path, in.Kind)
+		st, kinds, err := store.LoadForKindLayered(home.Path, projectOverlays(), in.Kind)
 		if err != nil {
 			return nil, searchResult{}, asToolError(err)
 		}

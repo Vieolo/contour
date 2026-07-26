@@ -153,6 +153,59 @@ func TestComposeUnmatchedTags(t *testing.T) {
 	}
 }
 
+func TestComposeIncludesLocalUnconditionally(t *testing.T) {
+	root := testRoot(t)
+	// A local overlay rule with a tag the "python" profile does NOT select, plus
+	// a local skill. Both must appear regardless of tags.
+	write(t, root, ".contour/rules/project-conventions.md", "---\ndescription: local rule\ntags: [unrelated]\n---\nlocal body")
+	write(t, root, ".contour/skills/deploy/SKILL.md", "---\ndescription: local skill\n---\nsteps")
+
+	p, err := LoadProfile(root, "python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.LoadLayered(root, filepath.Join(root, ".contour"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Compose(p, st)
+
+	if !hasID(c.Rules, "rules/project-conventions") {
+		t.Errorf("local rule missing from eager rules: %v", ids(c.Rules))
+	}
+	if !hasID(c.Skills, "skills/deploy") {
+		t.Errorf("local skill missing from menu: %v", ids(c.Skills))
+	}
+
+	out := c.Render("get <id>")
+	if !strings.Contains(out, "# Project rules (local") {
+		t.Errorf("Render lacks the local-rules section:\n%s", out)
+	}
+	if !strings.Contains(out, "take precedence") {
+		t.Errorf("Render lacks the precedence note:\n%s", out)
+	}
+	if !strings.Contains(out, "(local)") {
+		t.Errorf("Render lacks a (local) menu marker:\n%s", out)
+	}
+}
+
+func ids(items []store.Item) []string {
+	var out []string
+	for _, it := range items {
+		out = append(out, it.ID)
+	}
+	return out
+}
+
+func hasID(items []store.Item, id string) bool {
+	for _, it := range items {
+		if it.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRender(t *testing.T) {
 	out := compose(t, testRoot(t), "python").Render("contour get <id>")
 

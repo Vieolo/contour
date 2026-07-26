@@ -27,6 +27,7 @@ type listResult struct {
 type listItem struct {
 	ID          string   `json:"id" jsonschema:"pass to the get tool to read the full item"`
 	Kind        string   `json:"kind"`
+	Source      string   `json:"source" jsonschema:"store (central) or local (this project's overlay); local takes precedence on conflict"`
 	Description string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 }
@@ -50,7 +51,7 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 		if len(args) == 1 {
 			kind = args[0]
 		}
-		st, kinds, err := store.LoadForKind(home.Path, kind)
+		st, kinds, err := store.LoadForKindLayered(home.Path, projectOverlays(), kind)
 		if err != nil {
 			return err
 		}
@@ -67,7 +68,7 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 		if err != nil {
 			return nil, listResult{}, asToolError(err)
 		}
-		st, kinds, err := store.LoadForKind(home.Path, in.Kind)
+		st, kinds, err := store.LoadForKindLayered(home.Path, projectOverlays(), in.Kind)
 		if err != nil {
 			return nil, listResult{}, asToolError(err)
 		}
@@ -81,6 +82,7 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 				result.Items = append(result.Items, listItem{
 					ID:          it.ID,
 					Kind:        string(it.Kind),
+					Source:      string(it.Source),
 					Description: it.Description,
 					Tags:        it.Tags,
 				})
