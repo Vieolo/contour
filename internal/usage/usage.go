@@ -59,9 +59,15 @@ type Logger struct {
 	profile string
 }
 
-// Open starts a session log for a profile. The project is the working directory
-// the process was started in — the project the client spawned contour for.
-func Open(profile string) (*Logger, error) {
+// Open starts a session log for a session's bootstrap profiles. The project is
+// the working directory the process was started in — the project the client
+// spawned contour for.
+//
+// Several profiles are recorded as one comma-separated value rather than a JSON
+// list, so a log written before profiles could compose still parses.
+func Open(profiles []string) (*Logger, error) {
+	profile := strings.Join(profiles, ",")
+
 	project, err := projectDir()
 	if err != nil {
 		return nil, err

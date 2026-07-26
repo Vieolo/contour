@@ -5,6 +5,10 @@
 // their full bodies emitted up front, while skills and knowledge are offered as
 // a menu the agent fetches on demand. That split is what keeps a session's
 // initial context small while leaving the whole store reachable.
+//
+// Several profiles can be active at once. A project that is mostly Python but
+// ships an accessory CLI selects both entry points rather than needing the store
+// to carry a combined "python-cli" profile for every such pairing.
 package bootstrap
 
 import (
@@ -47,6 +51,20 @@ type profileFrontmatter struct {
 	Rules       []string `yaml:"rules"`
 	Skills      []string `yaml:"skills"`
 	Knowledge   []string `yaml:"knowledge"`
+}
+
+// TagsFor returns the profile's tag selection for a kind, so callers can treat
+// the three selections uniformly instead of switching on the field.
+func (p Profile) TagsFor(kind store.Kind) []string {
+	switch kind {
+	case store.KindRules:
+		return p.RuleTags
+	case store.KindSkills:
+		return p.SkillTags
+	case store.KindKnowledge:
+		return p.KnowledgeTags
+	}
+	return nil
 }
 
 // Dir returns the bootstrap directory inside a store root.
@@ -92,6 +110,22 @@ func LoadProfile(root, name string) (Profile, error) {
 		return Profile{}, fmt.Errorf("no bootstrap profile named %q", name)
 	}
 	return loadProfile(path)
+}
+
+// LoadNamed reads the named profiles, preserving the order given — that order
+// decides the order of the composed payload. It fails on the first name that
+// does not exist, rather than quietly composing a partial entry point from the
+// rest.
+func LoadNamed(root string, names []string) ([]Profile, error) {
+	profiles := make([]Profile, 0, len(names))
+	for _, name := range names {
+		p, err := LoadProfile(root, name)
+		if err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, nil
 }
 
 func loadProfile(path string) (Profile, error) {

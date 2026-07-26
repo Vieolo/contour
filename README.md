@@ -32,11 +32,18 @@ Write a rule once; every project and every session can reach it.
     - [Rules, knowledge and skills](#rules-knowledge-and-skills)
     - [Bootstrap profiles](#bootstrap-profiles)
   - [Bootstrap profiles](#bootstrap-profiles-1)
+    - [Combining profiles](#combining-profiles)
+  - [Project-specific context](#project-specific-context)
+    - [Overlay folders](#overlay-folders)
+    - [Local wins on conflict](#local-wins-on-conflict)
+    - [Single files (CLAUDE.md, AGENTS.md)](#single-files-claudemd-agentsmd)
+    - [Gradual migration](#gradual-migration)
   - [CLI reference](#cli-reference)
   - [Using contour with Claude Code](#using-contour-with-claude-code)
     - [Wiring it up](#wiring-it-up)
     - [Choosing the profile](#choosing-the-profile)
     - [What the agent gets](#what-the-agent-gets)
+  - [Seeing what your profiles offer](#seeing-what-your-profiles-offer)
   - [Improving the store with usage stats](#improving-the-store-with-usage-stats)
     - [Privacy](#privacy)
 
@@ -310,21 +317,112 @@ They also stay current on their own: add `rules/python/040-typing.md` and every 
 The order of the files are important in how they are loaded. Tags are emitted in the order you list them, so `[general, python]` puts your general rules before your Python ones. An item matching two selected tags appears once, in the position of the first tag that matched. If a profile names a tag that matches nothing, contour warns on stderr rather
 than silently sending less than you expected, which catches typos.
 
+### Combining profiles
+
+A project rarely sits under exactly one heading. A Python service might also
+ship an accessory CLI — real, but not what the project is *about*, so making
+`cli` the entry point would be wrong, and so would a `python-cli` profile that
+exists only for this one combination.
+
+So name more than one:
+
+```bash
+contour bootstrap python cli
+```
+
+or, in the project config:
+
+```yaml
+bootstrap: [python, cli]
+```
+
+They compose exactly the way tags inside a single profile already do — the
+order you list them drives the order of the payload, and an item both profiles
+select is loaded once, in the position of the first that selected it. Each
+profile's preamble is emitted, in the same order.
+
+This is what keeps `bootstrap/` from growing combinatorially. Profiles stay
+single-purpose (`python`, `cli`, `web`), and each project assembles the entry
+point it actually needs. A tag that matches nothing is still reported against
+the profile that asked for it, so a typo names the file to go and fix:
+
+```
+warning: profile "cli" requests tag "flgas", which matches no item
+```
+
+---
+
+## Project-specific context
+
+Not everything belongs in the central store. Some rules and knowledge are true only for one project, and a project should carry its own context rather than scatter it into a shared store. So contour layers **project-local context on top of the central store**, and lets you migrate between the two at your own pace.
+
+### Overlay folders
+
+In a project, contour looks for an overlay folder — any of `.contour/`, `.agents/` or `.claude/` — with the same `rules/`, `skills/` and `knowledge/` layout as the store:
+
+```
+my-project/
+├── .contour/
+│   ├── rules/
+│   │   └── 010-logging.md          ← always eager for this project
+│   └── skills/
+│       └── deploy/
+│           └── SKILL.md
+└── ...
+```
+
+Three folder names, because teams already keep agent context in different places; contour reads whichever you use (and unions them if you have more than one). It only looks at the `rules/`, `skills/` and `knowledge/` inside — anything else in the folder is left alone, so it sits happily beside another tool's config.
+
+Overlay items are **always active** for the project: local rules load eagerly, local skills and knowledge join the on-demand menu, no tags needed. Being local is scope enough.
+
+### Local wins on conflict
+
+When a local item and a central one clash, the local one is authoritative. contour states this to the agent rather than trying to detect clashes itself, so it covers semantic conflicts too:
+
+```
+# Rules                                     (from your central store)
+...
+# Project rules (local — authoritative on conflict)
+...
+```
+
+An identical path in both places (say `rules/python/errors.md` locally and in the store) resolves to the local one. Everything is labelled by source in `contour list`, so you always know where a rule came from.
+
+### Single files (CLAUDE.md, AGENTS.md)
+
+If you already keep a `CLAUDE.md` or `AGENTS.md`, you don't have to restructure it. List it in the project config and contour loads it eagerly as a project rule:
+
+```yaml
+# .contour.yaml   (at the project root)
+bootstrap: [python, cli]       # the central profiles for this project
+eager_files:
+  - AGENTS.md
+  - docs/architecture.md
+```
+
+`contour mcp-init` writes this file for you and detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
+
+The config lives at the project **root** (`.contour.yaml`), not inside an overlay folder, so moving your local rules from `.contour/` to `.agents/` later never silently drops it — the same reason the machine-wide config sits outside the store.
+
+### Gradual migration
+
+This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a few overlay rules — and move the reusable pieces into the central store one at a time, as you notice them repeating across projects. During a move the local copy wins, so nothing changes until you delete it and the store version takes over. You can adopt contour with no central store at all and grow into it.
+
 ---
 
 ## CLI reference
 
 | Command | Purpose |
 |---|---|
-| `contour list [kind]` | List items with their IDs, descriptions and tags. Optionally limit to `rules`, `skills` or `knowledge`. |
+| `contour list [kind]` | List items with their IDs, descriptions and tags. Optionally limit to `rules`, `skills` or `knowledge`. `--profiles` adds which bootstrap profiles offer each item. |
 | `contour get <id>` | Print one item's content. Body only, so it pipes cleanly. |
 | `contour search <query> [kind]` | Search IDs, descriptions, tags and content, case-insensitively. |
-| `contour bootstrap [name]` | Print a profile's session payload. Without a name, list the available profiles. |
+| `contour bootstrap [name...]` | Print the session payload for one or more profiles, composed in the order given. Without a name, list the available profiles. |
 | `contour init` | Create the store explicitly. Optional, contour creates it on first use. Safe to re-run; never overwrites existing files. |
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
-| `contour mcp-init` | Register contour in this project's `.mcp.json`, creating or updating it. Records contour's absolute path so an agent can launch it. |
+| `contour mcp-init` | Set the project up: register contour in `.mcp.json` (absolute path, bare `mcp`) and write `.contour.yaml` with the profiles, detecting a root `AGENTS.md`/`CLAUDE.md`. Repeat `--bootstrap` to combine profiles. |
 | `contour stats` | Show how agents have used the store: gaps (searched, found nothing), never-fetched items, and most-fetched. Local only; `--project`, `--days`, `--clear`. |
 | `contour version` | Print the version. |
 
@@ -346,6 +444,9 @@ contour search migration
 # The full session payload for a Python project
 contour bootstrap python
 
+# ...for a Python project that also ships a CLI
+contour bootstrap python cli
+
 # Where is my store?
 contour home
 
@@ -354,6 +455,9 @@ contour set-home ~/my/new/path/contour
 
 # ...or into the folder I'm already in
 contour set-home here
+
+# Which profiles offer each item — and what no profile offers?
+contour list --profiles
 
 # What have agents searched for but never found?
 contour stats
@@ -380,18 +484,26 @@ From your project root:
 contour mcp-init --bootstrap python
 ```
 
-That writes `.mcp.json`, or adds contour to the one you already have — other
-servers in the file are left exactly as they were. Commit it and everyone on the
+That does two things: registers contour in `.mcp.json` (or adds it to the one
+you already have, leaving other servers untouched), and writes a
+`.contour.yaml` recording the profile. Commit both and everyone on the
 project gets the same context.
 
-The result looks like this:
+Repeat the flag to combine entry points:
+
+```bash
+contour mcp-init --bootstrap python --bootstrap cli
+```
+
+The `.mcp.json` entry is a bare launch line — the profiles live in the project
+config, not the arguments:
 
 ```json
 {
   "mcpServers": {
     "contour": {
       "command": "/opt/homebrew/bin/contour",
-      "args": ["mcp", "--bootstrap", "python"]
+      "args": ["mcp"]
     }
   }
 }
@@ -408,35 +520,49 @@ It records the symlink (`/opt/homebrew/bin/contour`), never the versioned target
 underneath it (`/opt/homebrew/Cellar/contour/0.2.0/...`), so the entry keeps
 working after `brew upgrade`.
 
-Nothing else needs configuring, even if your store is somewhere custom: contour
-reads its location from `~/.contour/config.yaml`, so wherever `contour set-home`
-put it is where the server reads from.
+The profiles and any eager files come from `.contour.yaml` (see
+[Project-specific context](#project-specific-context)), so nothing project-specific
+is baked into the launch arguments. And nothing else needs configuring even if
+your store is somewhere custom: contour reads its location from
+`~/.contour/config.yaml`, so wherever `contour set-home` put it is where the
+server reads from.
 
 <details>
-<summary>Writing the file by hand</summary>
+<summary>Writing the files by hand</summary>
 
 `mcp-init` is a convenience, not a requirement. If you write `.mcp.json`
 yourself, use the absolute path to the binary — `which contour` will tell you —
-for the reason above. `claude mcp add` works too:
+for the reason above, and a bare `mcp` argument. `claude mcp add` works too:
 
 ```bash
-claude mcp add contour -- $(which contour) mcp --bootstrap python
+claude mcp add contour -- $(which contour) mcp
 ```
+
+Then set the profile in `.contour.yaml` with `bootstrap: <name>`.
 
 </details>
 
 ### Choosing the profile
 
-Pick the profile per project with `--bootstrap <name>`, as in the `args` above. It belongs in the project's own MCP config rather than in contour's config file, because the right profile depends on the project, not on the machine.
+The profiles live in the project config, so they travel with the project:
 
-Started without one, the server still serves the whole store through its tools, and its instructions explain how to select an entry point — a missing profile degrades gracefully rather than failing.
+```yaml
+# .contour.yaml   (at the project root)
+bootstrap: [python, cli]
+```
+
+A single profile can stay a bare name — `bootstrap: python` — and both forms are read the same way.
+
+`contour mcp-init --bootstrap <name>` writes that for you. The `--bootstrap` flag on `contour mcp` overrides it if you ever need to, and is repeatable. It belongs with the project rather than in the machine-wide config because the right profile depends on the project, not the machine.
+
+Started without one, the server still serves the whole store through its tools, and its instructions explain how to select an entry point — a missing profile degrades gracefully rather than failing. Any project overlay rules still load, so a project can rely on local context alone.
 
 ### What the agent gets
 
 **At session start**, in the server's instructions:
 
-- your profile's preamble
-- every rule the profile selects, in full
+- each selected profile's preamble
+- every rule those profiles select, in full
 - a menu of the available skills and knowledge, one line each
 
 **On demand**, through three tools:
@@ -448,6 +574,69 @@ Started without one, the server still serves the whole store through its tools, 
 | `search` | Find items by ID, description, tag or content |
 
 Edits to your store take effect on the next tool call, no need to restart the server after changing a file. The eagerly-loaded rules are fixed when the session starts, so changes to those apply from the next session.
+
+---
+
+## Seeing what your profiles offer
+
+As a store grows, it gets hard to tell what your profiles actually put in front
+of an agent. `contour list --profiles` cross-references the two:
+
+```bash
+contour list --profiles
+```
+
+```
+contour store: /Users/you/contour
+2 profiles: cli, python
+
+rules (4)
+  rules/general/010-comm
+      comm
+      tags: general, style
+      profiles: cli, python
+  rules/legacy/010-soap
+      soap
+      tags: legacy
+      profiles: none — not offered at session start
+  rules/python/010-errors
+      errs
+      tags: python
+      profiles: python
+  rules/010-logging  (local)
+      local convention
+      profiles: always active (local)
+
+2 items are in no profile.
+```
+
+**"No profile" does not mean unreachable.** The `list`, `search` and `get` tools
+serve the whole store regardless of profile, so an agent can always find such an
+item. What it lacks is *disclosure*: nothing puts it in front of the agent when
+a session starts, so it is only ever used if the agent goes looking for it.
+
+That is the difference between an item being **offered** and merely being
+**available** — and it is worth knowing deliberately. A rule you assumed was in
+effect everywhere, sitting under a tag no profile selects, is a silent gap. Give
+it a tag one of your profiles selects and it moves from available to offered.
+
+Project-local items need no profile: being local to the project is scope enough,
+so they show as always active.
+
+It is a flag on `list` rather than a command of its own, so the same kind
+argument narrows it:
+
+```bash
+contour list skills --profiles
+```
+
+The closing tally counts only the kinds shown. `--profiles` is CLI-only: the
+`list` tool an agent sees is unchanged, since how its context was assembled is
+your concern, not the agent's.
+
+This is decidable from the store alone — no usage data needed. It pairs with the
+stats below, which tell you what agents actually reached for once the items *are*
+offered.
 
 ---
 
