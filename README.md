@@ -43,6 +43,7 @@ Write a rule once; every project and every session can reach it.
     - [Wiring it up](#wiring-it-up)
     - [Choosing the profile](#choosing-the-profile)
     - [What the agent gets](#what-the-agent-gets)
+  - [Seeing what your profiles offer](#seeing-what-your-profiles-offer)
   - [Improving the store with usage stats](#improving-the-store-with-usage-stats)
     - [Privacy](#privacy)
 
@@ -413,7 +414,7 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 
 | Command | Purpose |
 |---|---|
-| `contour list [kind]` | List items with their IDs, descriptions and tags. Optionally limit to `rules`, `skills` or `knowledge`. |
+| `contour list [kind]` | List items with their IDs, descriptions and tags. Optionally limit to `rules`, `skills` or `knowledge`. `--profiles` adds which bootstrap profiles offer each item. |
 | `contour get <id>` | Print one item's content. Body only, so it pipes cleanly. |
 | `contour search <query> [kind]` | Search IDs, descriptions, tags and content, case-insensitively. |
 | `contour bootstrap [name...]` | Print the session payload for one or more profiles, composed in the order given. Without a name, list the available profiles. |
@@ -454,6 +455,9 @@ contour set-home ~/my/new/path/contour
 
 # ...or into the folder I'm already in
 contour set-home here
+
+# Which profiles offer each item — and what no profile offers?
+contour list --profiles
 
 # What have agents searched for but never found?
 contour stats
@@ -570,6 +574,69 @@ Started without one, the server still serves the whole store through its tools, 
 | `search` | Find items by ID, description, tag or content |
 
 Edits to your store take effect on the next tool call, no need to restart the server after changing a file. The eagerly-loaded rules are fixed when the session starts, so changes to those apply from the next session.
+
+---
+
+## Seeing what your profiles offer
+
+As a store grows, it gets hard to tell what your profiles actually put in front
+of an agent. `contour list --profiles` cross-references the two:
+
+```bash
+contour list --profiles
+```
+
+```
+contour store: /Users/you/contour
+2 profiles: cli, python
+
+rules (4)
+  rules/general/010-comm
+      comm
+      tags: general, style
+      profiles: cli, python
+  rules/legacy/010-soap
+      soap
+      tags: legacy
+      profiles: none — not offered at session start
+  rules/python/010-errors
+      errs
+      tags: python
+      profiles: python
+  rules/010-logging  (local)
+      local convention
+      profiles: always active (local)
+
+2 items are in no profile.
+```
+
+**"No profile" does not mean unreachable.** The `list`, `search` and `get` tools
+serve the whole store regardless of profile, so an agent can always find such an
+item. What it lacks is *disclosure*: nothing puts it in front of the agent when
+a session starts, so it is only ever used if the agent goes looking for it.
+
+That is the difference between an item being **offered** and merely being
+**available** — and it is worth knowing deliberately. A rule you assumed was in
+effect everywhere, sitting under a tag no profile selects, is a silent gap. Give
+it a tag one of your profiles selects and it moves from available to offered.
+
+Project-local items need no profile: being local to the project is scope enough,
+so they show as always active.
+
+It is a flag on `list` rather than a command of its own, so the same kind
+argument narrows it:
+
+```bash
+contour list skills --profiles
+```
+
+The closing tally counts only the kinds shown. `--profiles` is CLI-only: the
+`list` tool an agent sees is unchanged, since how its context was assembled is
+your concern, not the agent's.
+
+This is decidable from the store alone — no usage data needed. It pairs with the
+stats below, which tell you what agents actually reached for once the items *are*
+offered.
 
 ---
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/contour/internal/usage"
@@ -207,6 +208,63 @@ func ago(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
+}
+
+// ProfilesHeader names the profiles a listing is cross-referenced against.
+func ProfilesHeader(names []string) {
+	if len(names) == 0 {
+		termange.PrintWarningln("No bootstrap profiles, so nothing is offered at session start.")
+		return
+	}
+	termange.PrintInfof("%d %s: %s\n",
+		len(names), pluralize(len(names), "profile", "profiles"), strings.Join(names, ", "))
+}
+
+// KindSectionProfiles prints one kind's items annotated with the profiles that
+// offer each. It builds on the same item renderer as KindSection, so a listing
+// reads the same with the annotation as without it.
+func KindSectionProfiles(kind store.Kind, items []bootstrap.ItemProfiles) {
+	fmt.Println()
+	termange.PrintColorf(termange.ColorGreen, "%s (%d)\n", string(kind), len(items))
+	if len(items) == 0 {
+		termange.PrintInfoln("  (none)")
+		return
+	}
+	for _, ip := range items {
+		item(ip.Item)
+		profilesLine(ip)
+	}
+}
+
+// profilesLine renders what offers an item, aligned with the tags line above it.
+func profilesLine(ip bootstrap.ItemProfiles) {
+	switch {
+	case ip.AlwaysActive():
+		termange.PrintColorf(termange.ColorGreen, "      profiles: always active (local)\n")
+	case len(ip.Profiles) > 0:
+		termange.PrintColorf(termange.ColorGreen, "      profiles: %s\n", strings.Join(ip.Profiles, ", "))
+	default:
+		termange.PrintColorf(termange.ColorYellow, "      profiles: none — not offered at session start\n")
+	}
+}
+
+// UnofferedSummary closes a --profiles listing with what to do about the n items
+// nothing offers — and, just as importantly, what not to conclude about them.
+//
+// The note matters as much as the count. An item no profile selects is still
+// served by list, search and get, so calling it unreachable would be wrong; what
+// it lacks is a profile putting it in front of the agent up front.
+func UnofferedSummary(n int) {
+	fmt.Println()
+	if n == 0 {
+		termange.PrintSuccessln("Every item is offered by at least one profile.")
+		return
+	}
+
+	termange.PrintWarningf("%d %s in no profile.\n", n, pluralize(n, "item is", "items are"))
+	termange.PrintInfoln("  Such items stay reachable — an agent can find them with list, search and get.")
+	termange.PrintInfoln("  But nothing offers them when a session starts, so they are only used if the")
+	termange.PrintInfoln("  agent goes looking. Give one a tag a profile selects to have it offered up front.")
 }
 
 // StoreCreated reports that contour set up the store, and explains how its

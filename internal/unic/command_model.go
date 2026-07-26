@@ -52,6 +52,12 @@ type UniversalCommand[In, Out any] struct {
 	// Args validates positional CLI arguments.
 	Args cobra.PositionalArgs
 
+	// CLIFlags registers flags on the cobra command. It runs for the CLI surface
+	// only, which is the point: an option that serves a person curating the store
+	// has no business in a tool schema, where it would be one more thing for a
+	// model to consider and get wrong.
+	CLIFlags func(cmd *cobra.Command)
+
 	CLICommand func(cmd *cobra.Command, args []string) error
 	MCPCommand mcp.ToolHandlerFor[In, Out]
 }
@@ -74,13 +80,17 @@ func (c *UniversalCommand[In, Out]) GetCLIConfig() *cobra.Command {
 	if c.CLICommand == nil {
 		return nil
 	}
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   c.Use,
 		Short: c.Short,
 		Long:  c.Long,
 		Args:  c.Args,
 		RunE:  c.CLICommand,
 	}
+	if c.CLIFlags != nil {
+		c.CLIFlags(cmd)
+	}
+	return cmd
 }
 
 // RegisterMCPTool adds the command to an MCP server. It is a no-op for CLI-only
