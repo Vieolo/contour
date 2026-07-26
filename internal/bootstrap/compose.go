@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/vieolo/contour/internal/store"
@@ -17,32 +16,65 @@ const (
 	localRulesNote    = "These come from this project and take precedence over the central store where they conflict."
 )
 
-// Composed is a profile resolved against a store: the rules to load eagerly, and
-// the skills and knowledge offered for on-demand fetching. Each slice holds the
-// central items the profile selected followed by every project-overlay item,
-// which is always included regardless of tags.
+// Composed is a set of profiles resolved against a store: the rules to load
+// eagerly, and the skills and knowledge offered for on-demand fetching. Each
+// slice holds the central items the profiles selected followed by every
+// project-overlay item, which is always included regardless of tags.
 type Composed struct {
-	Profile   Profile
+	Profiles  []Profile
 	Rules     []store.Item
 	Skills    []store.Item
 	Knowledge []store.Item
 
-	// UnmatchedTags are tags the profile requested that matched no central item
-	// in any kind they were requested for — almost always a typo. Overlay items
-	// do not count, since they are included without tags.
-	UnmatchedTags []string
+	// UnmatchedTags are tags a profile requested that matched no central item in
+	// any kind it requested them for — almost always a typo. Overlay items do not
+	// count, since they are included without tags.
+	UnmatchedTags []UnmatchedTag
 }
 
-// Compose resolves a profile's tag selections against the central store and adds
-// every project-overlay item unconditionally.
-func Compose(p Profile, st *store.Store) Composed {
+// UnmatchedTag is one such tag, paired with the profile that asked for it. The
+// attribution is what makes the warning actionable once several profiles are
+// active: it names the file to go and fix.
+type UnmatchedTag struct {
+	Profile string
+	Tag     string
+}
+
+// Compose resolves the profiles' tag selections against the central store and
+// adds every project-overlay item unconditionally.
+//
+// Profiles compose by concatenating their tag selections in the order given, so
+// [python, cli] puts the Python rules ahead of the CLI ones, and an item both
+// profiles select appears once, in the earlier position. That is exactly the
+// rule that already orders tags within one profile, lifted a level — which is
+// what lets a project assemble the entry point it needs (mostly Python, with an
+// accessory CLI) without the store carrying a profile for every combination.
+func Compose(profiles []Profile, st *store.Store) Composed {
 	return Composed{
-		Profile:       p,
-		Rules:         composeKind(st, store.KindRules, p.RuleTags),
-		Skills:        composeKind(st, store.KindSkills, p.SkillTags),
-		Knowledge:     composeKind(st, store.KindKnowledge, p.KnowledgeTags),
-		UnmatchedTags: unmatchedTags(st, p),
+		Profiles:      profiles,
+		Rules:         composeKind(st, store.KindRules, mergedTags(profiles, store.KindRules)),
+		Skills:        composeKind(st, store.KindSkills, mergedTags(profiles, store.KindSkills)),
+		Knowledge:     composeKind(st, store.KindKnowledge, mergedTags(profiles, store.KindKnowledge)),
+		UnmatchedTags: unmatchedTags(st, profiles),
 	}
+}
+
+// mergedTags concatenates the profiles' tag selections for a kind in profile
+// order, dropping repeats so a tag two profiles share keeps its first position.
+func mergedTags(profiles []Profile, kind store.Kind) []string {
+	seen := make(map[string]bool)
+
+	var out []string
+	for _, p := range profiles {
+		for _, tag := range p.TagsFor(kind) {
+			if seen[tag] {
+				continue
+			}
+			seen[tag] = true
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 // composeKind selects the central items of a kind by tag, then appends every
@@ -71,30 +103,30 @@ func selectByTags(items []store.Item, tags []string) []store.Item {
 	return out
 }
 
-// unmatchedTags reports the tags a profile requested that matched no central
-// item in any of the kinds they were requested for.
-func unmatchedTags(st *store.Store, p Profile) []string {
-	requested := make(map[string][]store.Kind)
-	for _, sel := range []struct {
-		tags []string
-		kind store.Kind
-	}{
-		{p.RuleTags, store.KindRules},
-		{p.SkillTags, store.KindSkills},
-		{p.KnowledgeTags, store.KindKnowledge},
-	} {
-		for _, tag := range sel.tags {
-			requested[tag] = append(requested[tag], sel.kind)
+// unmatchedTags reports, per profile, the tags it requested that matched no
+// central item in any of the kinds it requested them for. Each profile is
+// checked on its own so a typo is attributed to the file that contains it,
+// rather than to whichever set of profiles happened to be selected together.
+func unmatchedTags(st *store.Store, profiles []Profile) []UnmatchedTag {
+	var out []UnmatchedTag
+	for _, p := range profiles {
+		requested := make(map[string][]store.Kind)
+		var order []string // request order, so output is deterministic without sorting
+		for _, kind := range store.Kinds {
+			for _, tag := range p.TagsFor(kind) {
+				if _, seen := requested[tag]; !seen {
+					order = append(order, tag)
+				}
+				requested[tag] = append(requested[tag], kind)
+			}
 		}
-	}
 
-	var out []string
-	for tag, kinds := range requested {
-		if !anyStoreItemHasTag(st, kinds, tag) {
-			out = append(out, tag)
+		for _, tag := range order {
+			if !anyStoreItemHasTag(st, requested[tag], tag) {
+				out = append(out, UnmatchedTag{Profile: p.Name, Tag: tag})
+			}
 		}
 	}
-	sort.Strings(out) // map iteration is unordered; keep output deterministic
 	return out
 }
 
@@ -110,7 +142,7 @@ func anyStoreItemHasTag(st *store.Store, kinds []store.Kind, tag string) bool {
 }
 
 // Render returns the session-initialisation payload as markdown: the profile
-// preamble, the selected central rules, the project's local rules (with the
+// preambles, the selected central rules, the project's local rules (with the
 // precedence note), and menus of the skills and knowledge available on demand.
 //
 // fetchHint describes how to retrieve a menu item (for example
@@ -119,9 +151,13 @@ func anyStoreItemHasTag(st *store.Store, kinds []store.Kind, tag string) bool {
 func (c Composed) Render(fetchHint string) string {
 	var b strings.Builder
 
-	if c.Profile.Preamble != "" {
-		b.WriteString(c.Profile.Preamble)
-		b.WriteString("\n\n")
+	// Each active profile's preamble, in profile order. They are separate
+	// markdown blocks, so several read as consecutive paragraphs.
+	for _, p := range c.Profiles {
+		if p.Preamble != "" {
+			b.WriteString(p.Preamble)
+			b.WriteString("\n\n")
+		}
 	}
 
 	storeRules, localRules := partitionBySource(c.Rules)

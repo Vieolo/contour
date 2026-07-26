@@ -32,6 +32,7 @@ Write a rule once; every project and every session can reach it.
     - [Rules, knowledge and skills](#rules-knowledge-and-skills)
     - [Bootstrap profiles](#bootstrap-profiles)
   - [Bootstrap profiles](#bootstrap-profiles-1)
+    - [Combining profiles](#combining-profiles)
   - [Project-specific context](#project-specific-context)
     - [Overlay folders](#overlay-folders)
     - [Local wins on conflict](#local-wins-on-conflict)
@@ -315,6 +316,39 @@ They also stay current on their own: add `rules/python/040-typing.md` and every 
 The order of the files are important in how they are loaded. Tags are emitted in the order you list them, so `[general, python]` puts your general rules before your Python ones. An item matching two selected tags appears once, in the position of the first tag that matched. If a profile names a tag that matches nothing, contour warns on stderr rather
 than silently sending less than you expected, which catches typos.
 
+### Combining profiles
+
+A project rarely sits under exactly one heading. A Python service might also
+ship an accessory CLI — real, but not what the project is *about*, so making
+`cli` the entry point would be wrong, and so would a `python-cli` profile that
+exists only for this one combination.
+
+So name more than one:
+
+```bash
+contour bootstrap python cli
+```
+
+or, in the project config:
+
+```yaml
+bootstrap: [python, cli]
+```
+
+They compose exactly the way tags inside a single profile already do — the
+order you list them drives the order of the payload, and an item both profiles
+select is loaded once, in the position of the first that selected it. Each
+profile's preamble is emitted, in the same order.
+
+This is what keeps `bootstrap/` from growing combinatorially. Profiles stay
+single-purpose (`python`, `cli`, `web`), and each project assembles the entry
+point it actually needs. A tag that matches nothing is still reported against
+the profile that asked for it, so a typo names the file to go and fix:
+
+```
+warning: profile "cli" requests tag "flgas", which matches no item
+```
+
 ---
 
 ## Project-specific context
@@ -359,7 +393,7 @@ If you already keep a `CLAUDE.md` or `AGENTS.md`, you don't have to restructure 
 
 ```yaml
 # .contour.yaml   (at the project root)
-bootstrap: python              # the central profile for this project
+bootstrap: [python, cli]       # the central profiles for this project
 eager_files:
   - AGENTS.md
   - docs/architecture.md
@@ -382,12 +416,12 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 | `contour list [kind]` | List items with their IDs, descriptions and tags. Optionally limit to `rules`, `skills` or `knowledge`. |
 | `contour get <id>` | Print one item's content. Body only, so it pipes cleanly. |
 | `contour search <query> [kind]` | Search IDs, descriptions, tags and content, case-insensitively. |
-| `contour bootstrap [name]` | Print a profile's session payload. Without a name, list the available profiles. |
+| `contour bootstrap [name...]` | Print the session payload for one or more profiles, composed in the order given. Without a name, list the available profiles. |
 | `contour init` | Create the store explicitly. Optional, contour creates it on first use. Safe to re-run; never overwrites existing files. |
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
-| `contour mcp-init` | Set the project up: register contour in `.mcp.json` (absolute path, bare `mcp`) and write `.contour.yaml` with the profile, detecting a root `AGENTS.md`/`CLAUDE.md`. |
+| `contour mcp-init` | Set the project up: register contour in `.mcp.json` (absolute path, bare `mcp`) and write `.contour.yaml` with the profiles, detecting a root `AGENTS.md`/`CLAUDE.md`. Repeat `--bootstrap` to combine profiles. |
 | `contour stats` | Show how agents have used the store: gaps (searched, found nothing), never-fetched items, and most-fetched. Local only; `--project`, `--days`, `--clear`. |
 | `contour version` | Print the version. |
 
@@ -408,6 +442,9 @@ contour search migration
 
 # The full session payload for a Python project
 contour bootstrap python
+
+# ...for a Python project that also ships a CLI
+contour bootstrap python cli
 
 # Where is my store?
 contour home
@@ -448,7 +485,13 @@ you already have, leaving other servers untouched), and writes a
 `.contour.yaml` recording the profile. Commit both and everyone on the
 project gets the same context.
 
-The `.mcp.json` entry is a bare launch line — the profile lives in the project
+Repeat the flag to combine entry points:
+
+```bash
+contour mcp-init --bootstrap python --bootstrap cli
+```
+
+The `.mcp.json` entry is a bare launch line — the profiles live in the project
 config, not the arguments:
 
 ```json
@@ -473,7 +516,7 @@ It records the symlink (`/opt/homebrew/bin/contour`), never the versioned target
 underneath it (`/opt/homebrew/Cellar/contour/0.2.0/...`), so the entry keeps
 working after `brew upgrade`.
 
-The profile and any eager files come from `.contour.yaml` (see
+The profiles and any eager files come from `.contour.yaml` (see
 [Project-specific context](#project-specific-context)), so nothing project-specific
 is baked into the launch arguments. And nothing else needs configuring even if
 your store is somewhere custom: contour reads its location from
@@ -497,14 +540,16 @@ Then set the profile in `.contour.yaml` with `bootstrap: <name>`.
 
 ### Choosing the profile
 
-The profile lives in the project config, so it travels with the project:
+The profiles live in the project config, so they travel with the project:
 
 ```yaml
 # .contour.yaml   (at the project root)
-bootstrap: python
+bootstrap: [python, cli]
 ```
 
-`contour mcp-init --bootstrap <name>` writes that for you. The `--bootstrap` flag on `contour mcp` overrides it if you ever need to. It belongs with the project rather than in the machine-wide config because the right profile depends on the project, not the machine.
+A single profile can stay a bare name — `bootstrap: python` — and both forms are read the same way.
+
+`contour mcp-init --bootstrap <name>` writes that for you. The `--bootstrap` flag on `contour mcp` overrides it if you ever need to, and is repeatable. It belongs with the project rather than in the machine-wide config because the right profile depends on the project, not the machine.
 
 Started without one, the server still serves the whole store through its tools, and its instructions explain how to select an entry point — a missing profile degrades gracefully rather than failing. Any project overlay rules still load, so a project can rely on local context alone.
 
@@ -512,8 +557,8 @@ Started without one, the server still serves the whole store through its tools, 
 
 **At session start**, in the server's instructions:
 
-- your profile's preamble
-- every rule the profile selects, in full
+- each selected profile's preamble
+- every rule those profiles select, in full
 - a menu of the available skills and knowledge, one line each
 
 **On demand**, through three tools:

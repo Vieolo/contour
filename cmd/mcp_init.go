@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	mcpInitProfile string
-	mcpInitFile    string
-	mcpInitName    string
+	mcpInitProfiles []string
+	mcpInitFile     string
+	mcpInitName     string
 )
 
 // commonAgentFiles are the single-file conventions mcp-init offers to load
@@ -27,13 +27,14 @@ var mcpInitCmd = &cobra.Command{
 	Use:   "mcp-init",
 	Short: "Register contour as an MCP server in this project",
 	Long: "Set this project up for contour: write the MCP config so an agent " +
-		"starts contour, and a project config that pins the profile and lists any " +
+		"starts contour, and a project config that pins the profiles and lists any " +
 		"files to load eagerly.\n\n" +
 		"The MCP entry (in " + mcpconfig.DefaultFile + ") records contour's " +
 		"absolute path — an agent launches its servers without a login shell, so a " +
 		"bare `contour` would not resolve — and a bare `mcp` command, because the " +
-		"profile now lives in the project config rather than the launch arguments.\n\n" +
-		"Pass --bootstrap to set the profile. Any AGENTS.md or CLAUDE.md at the " +
+		"profiles now live in the project config rather than the launch arguments.\n\n" +
+		"Pass --bootstrap to set a profile, repeating it to combine entry points " +
+		"(--bootstrap python --bootstrap cli). Any AGENTS.md or CLAUDE.md at the " +
 		"project root is detected and listed for eager loading; edit the config to " +
 		"change that.",
 	Args: cobra.NoArgs,
@@ -45,10 +46,8 @@ var mcpInitCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("determine contour's own path: %w", err)
 		}
-		if mcpInitProfile != "" {
-			if err := checkProfileExists(mcpInitProfile); err != nil {
-				return err
-			}
+		if err := checkProfilesExist(mcpInitProfiles); err != nil {
+			return err
 		}
 
 		cwd, err := os.Getwd()
@@ -59,7 +58,7 @@ var mcpInitCmd = &cobra.Command{
 
 		// 1. The project config carries the profile and eager files, so the
 		//    settings live with the project and .mcp.json stays a bare launch.
-		cfgPath, err := project.Write(cwd, mcpInitProfile, eager)
+		cfgPath, err := project.Write(cwd, mcpInitProfiles, eager)
 		if err != nil {
 			return err
 		}
@@ -81,22 +80,22 @@ var mcpInitCmd = &cobra.Command{
 		}
 		termange.PrintInfof("  command: %s\n", exe)
 		termange.PrintInfof("  config:  %s\n", cfgPath)
-		if mcpInitProfile != "" {
-			termange.PrintInfof("  profile: %s\n", mcpInitProfile)
+		for _, p := range mcpInitProfiles {
+			termange.PrintInfof("  profile: %s\n", p)
 		}
 		for _, f := range eager {
 			termange.PrintInfof("  eager:   %s (detected)\n", f)
 		}
-		if mcpInitProfile == "" {
-			termange.PrintWarningf("\nNo profile set — add `bootstrap: <name>` to %s (%s bootstrap lists them).\n", cfgPath, config.Program)
+		if len(mcpInitProfiles) == 0 {
+			termange.PrintWarningf("\nNo profile set — add `bootstrap: [<name>]` to %s (%s bootstrap lists them).\n", cfgPath, config.Program)
 		}
 		return nil
 	},
 }
 
 func init() {
-	mcpInitCmd.Flags().StringVar(&mcpInitProfile, "bootstrap", "",
-		"bootstrap profile to record in the project config")
+	mcpInitCmd.Flags().StringSliceVar(&mcpInitProfiles, "bootstrap", nil,
+		"bootstrap profile to record in the project config (repeatable)")
 	mcpInitCmd.Flags().StringVar(&mcpInitFile, "file", mcpconfig.DefaultFile,
 		"MCP config file to create or update")
 	mcpInitCmd.Flags().StringVar(&mcpInitName, "name", config.Program,
@@ -117,14 +116,17 @@ func detectEagerFiles(projectDir string) []string {
 	return found
 }
 
-// checkProfileExists rejects an unknown profile now rather than leaving the
+// checkProfilesExist rejects an unknown profile now rather than leaving the
 // agent to start a session with nothing loaded.
-func checkProfileExists(name string) error {
+func checkProfilesExist(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
 	home, err := resolveStore()
 	if err != nil {
 		return err
 	}
-	if _, err := bootstrap.LoadProfile(home.Path, name); err != nil {
+	if _, err := bootstrap.LoadNamed(home.Path, names); err != nil {
 		return withAvailableProfiles(home.Path, err)
 	}
 	return nil

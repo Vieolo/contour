@@ -36,10 +36,10 @@ type Options struct {
 	// rules, from the project config.
 	EagerFiles []store.EagerFile
 
-	// Profile is the bootstrap profile loaded eagerly. When empty no central
-	// rules are preloaded (local overlay rules still are), and the instructions
-	// explain how to select one.
-	Profile string
+	// Profiles are the bootstrap profiles loaded eagerly, composed in order.
+	// When empty no central rules are preloaded (local overlay rules still are),
+	// and the instructions explain how to select an entry point.
+	Profiles []string
 
 	// Version is reported to clients during initialisation.
 	Version string
@@ -102,7 +102,7 @@ func BuildInstructions(opts Options) (string, error) {
 	b.WriteString("contour provides the centralised rules, skills and knowledge for this session.\n")
 	b.WriteString("Any rules below are already in effect. Use the `list`, `search` and `get` tools to pull anything else on demand.\n\n")
 
-	if opts.Profile == "" {
+	if len(opts.Profiles) == 0 {
 		writeNoProfileNotice(&b, opts.Root)
 		// Local project rules still apply without a central profile.
 		b.WriteString(bootstrap.RenderLocalRules(st.BySource(store.KindRules, store.OriginLocal)))
@@ -114,11 +114,11 @@ func BuildInstructions(opts Options) (string, error) {
 		return strings.TrimRight(b.String(), "\n") + "\n", nil
 	}
 
-	p, err := bootstrap.LoadProfile(opts.Root, opts.Profile)
+	profiles, err := bootstrap.LoadNamed(opts.Root, opts.Profiles)
 	if err != nil {
 		return "", err
 	}
-	b.WriteString(bootstrap.Compose(p, st).Render(fetchHint))
+	b.WriteString(bootstrap.Compose(profiles, st).Render(fetchHint))
 	return b.String(), nil
 }
 
@@ -126,7 +126,7 @@ func BuildInstructions(opts Options) (string, error) {
 // started without one, naming the profiles that exist.
 func writeNoProfileNotice(b *strings.Builder, root string) {
 	b.WriteString("No bootstrap profile is selected, so no rules were loaded eagerly.\n")
-	b.WriteString("Select one by passing --bootstrap <name> when starting the server.\n")
+	b.WriteString("Select one or more by passing --bootstrap <name> when starting the server.\n")
 
 	profiles, err := bootstrap.LoadProfiles(root)
 	if err != nil || len(profiles) == 0 {

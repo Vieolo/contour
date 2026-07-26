@@ -46,7 +46,7 @@ func TestLoggerWritesSelfContainedJSONL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	l, err := Open("python")
+	l, err := Open([]string{"python"})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

@@ -46,17 +46,17 @@ func testRoot(t *testing.T) string {
 	return root
 }
 
-func compose(t *testing.T, root, name string) Composed {
+func compose(t *testing.T, root string, names ...string) Composed {
 	t.Helper()
-	p, err := LoadProfile(root, name)
+	profiles, err := LoadNamed(root, names)
 	if err != nil {
-		t.Fatalf("LoadProfile(%q): %v", name, err)
+		t.Fatalf("LoadNamed(%v): %v", names, err)
 	}
 	st, err := store.Load(root)
 	if err != nil {
 		t.Fatalf("store.Load: %v", err)
 	}
-	return Compose(p, st)
+	return Compose(profiles, st)
 }
 
 func TestLoadProfile(t *testing.T) {
@@ -148,8 +148,103 @@ func TestComposeUnmatchedTags(t *testing.T) {
 	if len(c.Rules) != 0 {
 		t.Errorf("rules = %v, want none", c.Rules)
 	}
-	if want := []string{"missingtag"}; !reflect.DeepEqual(c.UnmatchedTags, want) {
+	want := []UnmatchedTag{{Profile: "empty", Tag: "missingtag"}}
+	if !reflect.DeepEqual(c.UnmatchedTags, want) {
 		t.Errorf("UnmatchedTags = %v, want %v", c.UnmatchedTags, want)
+	}
+}
+
+// A typo must be attributed to the profile that contains it, not to the whole
+// selection — otherwise a combined entry point gives you no file to go and fix.
+func TestComposeAttributesUnmatchedTagsToTheirProfile(t *testing.T) {
+	c := compose(t, testRoot(t), "python", "empty")
+
+	want := []UnmatchedTag{{Profile: "empty", Tag: "missingtag"}}
+	if !reflect.DeepEqual(c.UnmatchedTags, want) {
+		t.Errorf("UnmatchedTags = %v, want %v", c.UnmatchedTags, want)
+	}
+}
+
+// Several profiles compose by concatenating their tag selections in order. An
+// item both select is loaded once, keeping the position of the earlier profile.
+func TestComposeMultipleProfilesOrderAndDedup(t *testing.T) {
+	root := testRoot(t)
+	// "js" selects js and, second, general — which "python" already selected. The
+	// shared general rules must not repeat, and must stay in the python block.
+	write(t, root, "bootstrap/js.md",
+		"---\ndescription: JS projects\nrules: [js, general]\nskills: [python]\n---\nJS preamble.")
+
+	c := compose(t, root, "python", "js")
+
+	want := []string{
+		"rules/general/010-comm",  // general, from python
+		"rules/python/020-shared", // general (tagged), from python
+		"rules/python/010-errors", // python
+		"rules/js/010-style",      // js, added by the second profile
+	}
+	if got := ids(c.Rules); !reflect.DeepEqual(got, want) {
+		t.Errorf("rule order = %v, want %v", got, want)
+	}
+
+	// Both profiles select the "python" skill tag; it must appear exactly once.
+	if got := ids(c.Skills); !reflect.DeepEqual(got, []string{"skills/python/release"}) {
+		t.Errorf("skills = %v, want [skills/python/release]", got)
+	}
+}
+
+// Reversing the order reverses the payload: the tag list drives the order, and
+// naming a profile first puts its rules first.
+func TestComposeMultipleProfilesRespectsGivenOrder(t *testing.T) {
+	root := testRoot(t)
+	write(t, root, "bootstrap/js.md",
+		"---\ndescription: JS projects\nrules: [js]\n---\nJS preamble.")
+
+	c := compose(t, root, "js", "python")
+
+	want := []string{
+		"rules/js/010-style",
+		"rules/general/010-comm",
+		"rules/python/020-shared",
+		"rules/python/010-errors",
+	}
+	if got := ids(c.Rules); !reflect.DeepEqual(got, want) {
+		t.Errorf("rule order = %v, want %v", got, want)
+	}
+}
+
+// Every active profile's preamble reaches the agent; none is silently dropped.
+func TestRenderEmitsEveryPreamble(t *testing.T) {
+	root := testRoot(t)
+	write(t, root, "bootstrap/js.md",
+		"---\ndescription: JS projects\nrules: [js]\n---\nJS preamble.")
+
+	out := compose(t, root, "python", "js").Render("get <id>")
+
+	python := strings.Index(out, "Preamble text.")
+	js := strings.Index(out, "JS preamble.")
+	if python < 0 || js < 0 {
+		t.Fatalf("a preamble is missing (python=%d js=%d):\n%s", python, js, out)
+	}
+	if python > js {
+		t.Errorf("preambles are out of profile order:\n%s", out)
+	}
+}
+
+func TestLoadNamedFailsOnAnyMissingProfile(t *testing.T) {
+	root := testRoot(t)
+
+	// The first name is valid, so a partial result would be easy to return by
+	// accident — and would compose an entry point quietly missing a slice.
+	if _, err := LoadNamed(root, []string{"python", "nope"}); err == nil {
+		t.Error("LoadNamed returned nil error for a missing profile")
+	}
+
+	profiles, err := LoadNamed(root, []string{"python", "empty"})
+	if err != nil {
+		t.Fatalf("LoadNamed: %v", err)
+	}
+	if len(profiles) != 2 || profiles[0].Name != "python" || profiles[1].Name != "empty" {
+		t.Errorf("LoadNamed did not preserve the given order: %v", profiles)
 	}
 }
 
@@ -168,7 +263,7 @@ func TestComposeIncludesLocalUnconditionally(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := Compose(p, st)
+	c := Compose([]Profile{p}, st)
 
 	if !hasID(c.Rules, "rules/project-conventions") {
 		t.Errorf("local rule missing from eager rules: %v", ids(c.Rules))

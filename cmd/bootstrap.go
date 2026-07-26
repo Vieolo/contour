@@ -12,15 +12,19 @@ import (
 )
 
 var bootstrapCmd = &cobra.Command{
-	Use:   "bootstrap [name]",
-	Short: "Print the session-initialisation payload for a bootstrap profile",
-	Long: "Resolve a bootstrap profile and print everything an agent needs to " +
-		"start a session: the profile preamble, the rules it selects in full, " +
-		"and a menu of the skills and knowledge available to fetch on demand.\n\n" +
+	Use:   "bootstrap [name...]",
+	Short: "Print the session-initialisation payload for one or more bootstrap profiles",
+	Long: "Resolve one or more bootstrap profiles and print everything an agent " +
+		"needs to start a session: the profile preambles, the rules they select " +
+		"in full, and a menu of the skills and knowledge available to fetch on " +
+		"demand.\n\n" +
+		"Name several profiles to combine entry points — `bootstrap python cli` " +
+		"for a Python project that also ships a CLI. They compose in the order " +
+		"given, and an item selected by more than one is loaded once.\n\n" +
 		"Run without a name to list the available profiles.\n\n" +
 		"The payload is plain markdown on stdout — diagnostics go to stderr — " +
 		"so it can be piped straight into an agent.",
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, err := resolveStore()
 		if err != nil {
@@ -31,7 +35,7 @@ var bootstrapCmd = &cobra.Command{
 			return listProfiles(home.Path)
 		}
 
-		p, err := bootstrap.LoadProfile(home.Path, args[0])
+		profiles, err := bootstrap.LoadNamed(home.Path, args)
 		if err != nil {
 			return withAvailableProfiles(home.Path, err)
 		}
@@ -39,14 +43,14 @@ var bootstrapCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		composed := bootstrap.Compose(p, st)
+		composed := bootstrap.Compose(profiles, st)
 
 		// Diagnostics go to stderr so stdout stays a clean, pipeable payload.
 		if config.Dev {
 			fmt.Fprintf(os.Stderr, "[%s build] store: %s\n", config.Label, home.Path)
 		}
-		for _, tag := range composed.UnmatchedTags {
-			fmt.Fprintf(os.Stderr, "warning: profile %q requests tag %q, which matches no item\n", p.Name, tag)
+		for _, u := range composed.UnmatchedTags {
+			fmt.Fprintf(os.Stderr, "warning: profile %q requests tag %q, which matches no item\n", u.Profile, u.Tag)
 		}
 
 		fmt.Print(composed.Render(config.Program + " get <id>"))
@@ -81,6 +85,7 @@ func listProfiles(root string) error {
 			tagList(p.RuleTags), tagList(p.SkillTags), tagList(p.KnowledgeTags))
 	}
 	termange.PrintInfof("\nEmit one with: %s bootstrap <name>\n", config.Program)
+	termange.PrintInfof("Combine several: %s bootstrap <name> <name>\n", config.Program)
 	return nil
 }
 

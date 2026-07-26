@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -25,8 +26,9 @@ func TestLoadReadsBootstrapAndEagerFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Bootstrap != "python" {
-		t.Errorf("Bootstrap = %q, want python", cfg.Bootstrap)
+	// A bare name is the pre-existing shape and must keep working unchanged.
+	if want := []string{"python"}; !reflect.DeepEqual(cfg.Bootstrap, want) {
+		t.Errorf("Bootstrap = %v, want %v", cfg.Bootstrap, want)
 	}
 	if len(cfg.EagerFiles) != 2 {
 		t.Fatalf("EagerFiles = %v, want 2", cfg.EagerFiles)
@@ -43,12 +45,50 @@ func TestLoadReadsBootstrapAndEagerFiles(t *testing.T) {
 	}
 }
 
+// Several profiles compose into one entry point, so the key takes a list too.
+func TestLoadReadsBootstrapList(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want []string
+	}{
+		{"flow", "bootstrap: [python, cli]\n", []string{"python", "cli"}},
+		{"block", "bootstrap:\n  - python\n  - cli\n", []string{"python", "cli"}},
+		// Order is meaningful, so de-duplication keeps the first occurrence.
+		{"dedup", "bootstrap: [python, cli, python]\n", []string{"python", "cli"}},
+		{"blanks", "bootstrap: [python, \"\", \"  cli \"]\n", []string{"python", "cli"}},
+		{"empty", "bootstrap: []\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, filepath.Join(dir, FileName), tc.yaml)
+
+			cfg, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !reflect.DeepEqual(cfg.Bootstrap, tc.want) {
+				t.Errorf("Bootstrap = %v, want %v", cfg.Bootstrap, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNonNameBootstrap(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, FileName), "bootstrap:\n  name: python\n")
+
+	if _, err := Load(dir); err == nil {
+		t.Error("Load accepted a mapping for bootstrap")
+	}
+}
+
 func TestLoadMissingConfigIsZero(t *testing.T) {
 	cfg, err := Load(t.TempDir())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Bootstrap != "" || len(cfg.EagerFiles) != 0 || cfg.Path != "" {
+	if len(cfg.Bootstrap) != 0 || len(cfg.EagerFiles) != 0 || cfg.Path != "" {
 		t.Errorf("expected a zero Config, got %+v", cfg)
 	}
 }
@@ -56,7 +96,7 @@ func TestLoadMissingConfigIsZero(t *testing.T) {
 func TestWriteRoundtripsAtProjectRoot(t *testing.T) {
 	dir := t.TempDir()
 
-	path, err := Write(dir, "python", []string{"AGENTS.md"})
+	path, err := Write(dir, []string{"python"}, []string{"AGENTS.md"})
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -70,10 +110,28 @@ func TestWriteRoundtripsAtProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Bootstrap != "python" {
-		t.Errorf("Bootstrap = %q, want python", cfg.Bootstrap)
+	if want := []string{"python"}; !reflect.DeepEqual(cfg.Bootstrap, want) {
+		t.Errorf("Bootstrap = %v, want %v", cfg.Bootstrap, want)
 	}
 	if len(cfg.EagerFiles) != 1 || cfg.EagerFiles[0].ID != "AGENTS.md" {
 		t.Errorf("EagerFiles = %v, want [AGENTS.md]", cfg.EagerFiles)
+	}
+}
+
+// What Write emits must be what Load accepts, for every profile count — the
+// written file is the one a user then edits by hand.
+func TestWriteRoundtripsProfileCounts(t *testing.T) {
+	for _, want := range [][]string{nil, {"python"}, {"python", "cli"}} {
+		dir := t.TempDir()
+		if _, err := Write(dir, want, nil); err != nil {
+			t.Fatalf("Write(%v): %v", want, err)
+		}
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load after Write(%v): %v", want, err)
+		}
+		if !reflect.DeepEqual(cfg.Bootstrap, want) {
+			t.Errorf("round trip of %v gave %v", want, cfg.Bootstrap)
+		}
 	}
 }
