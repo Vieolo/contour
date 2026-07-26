@@ -19,9 +19,27 @@ import (
 	"github.com/vieolo/contour/internal/store"
 )
 
-// fetchHint tells an agent how to retrieve a menu item over MCP. The CLI passes
+// FetchHint tells an agent how to retrieve a menu item over MCP. The CLI passes
 // its own hint to the same renderer.
-const fetchHint = "the `get` tool with the item's ID"
+const FetchHint = "the `get` tool with the item's ID"
+
+// InstructionsBudget caps the initialisation instructions.
+//
+// The MCP specification describes `instructions` as a hint a client "may" add to
+// the system prompt — not a delivery guarantee — and clients cap it, cutting
+// from the end. A store whose eager rules outgrow that cap therefore loses its
+// last rules silently, which is the worst possible failure: the agent cannot
+// tell that anything is missing.
+//
+// So contour sends an excerpt it knows fits, and says what it withheld. The
+// figure is deliberately conservative: the caps are undocumented and vary by
+// client, so the budget is set below the smallest one observed rather than at it.
+const InstructionsBudget = 1900
+
+// noticeReserve is the room set aside for the excerpt notice. It is only
+// deducted once the payload is known not to fit, so a store that fits keeps its
+// full budget.
+const noticeReserve = 460
 
 // Options configures the server.
 type Options struct {
@@ -99,27 +117,88 @@ func BuildInstructions(opts Options) (string, error) {
 	}
 
 	var b strings.Builder
-	b.WriteString("contour provides the centralised rules, skills and knowledge for this session.\n")
-	b.WriteString("Any rules below are already in effect. Use the `list`, `search` and `get` tools to pull anything else on demand.\n\n")
+	b.WriteString(intro)
 
 	if len(opts.Profiles) == 0 {
 		writeNoProfileNotice(&b, opts.Root)
-		// Local project rules still apply without a central profile.
-		b.WriteString(bootstrap.RenderLocalRules(st.BySource(store.KindRules, store.OriginLocal)))
-		// Central rules aren't eager here, but they remain fetchable, so list
-		// them alongside the on-demand skills and knowledge.
-		b.WriteString(bootstrap.RenderMenu("Available rules", st.BySource(store.KindRules, store.OriginStore), fetchHint))
-		b.WriteString(bootstrap.RenderMenu("Available skills", st.ByKind(store.KindSkills), fetchHint))
-		b.WriteString(bootstrap.RenderMenu("Available knowledge", st.ByKind(store.KindKnowledge), fetchHint))
-		return strings.TrimRight(b.String(), "\n") + "\n", nil
+		return noProfileInstructions(b.String(), st), nil
 	}
 
 	profiles, err := bootstrap.LoadNamed(opts.Root, opts.Profiles)
 	if err != nil {
 		return "", err
 	}
-	b.WriteString(bootstrap.Compose(profiles, st).Render(fetchHint))
+	composed := bootstrap.Compose(profiles, st)
+
+	// Try the whole payload first; only if it will not fit does the notice cost
+	// anything, so a store within budget is delivered exactly as before.
+	avail := InstructionsBudget - len(intro)
+	ex := composed.RenderWithin(avail, FetchHint)
+	if !ex.Complete {
+		ex = composed.RenderWithin(avail-noticeReserve, FetchHint)
+		b.WriteString(excerptNotice(ex))
+	}
+	b.WriteString(ex.Body)
 	return b.String(), nil
+}
+
+// noProfileInstructions builds the instructions for a session with no central
+// profile. Local project rules still load eagerly, so this path carries real
+// eager content and is budgeted like any other — a project adopting contour with
+// local rules alone must not lose them silently either.
+//
+// Menus go first when space runs short: the list tool reproduces them on demand,
+// whereas a local rule body has no other eager route to the agent.
+func noProfileInstructions(head string, st *store.Store) string {
+	localRules := st.BySource(store.KindRules, store.OriginLocal)
+	// Central rules aren't eager here, but they remain fetchable, so list them
+	// alongside the on-demand skills and knowledge.
+	menus := bootstrap.RenderMenu("Available rules", st.BySource(store.KindRules, store.OriginStore), FetchHint) +
+		bootstrap.RenderMenu("Available skills", st.ByKind(store.KindSkills), FetchHint) +
+		bootstrap.RenderMenu("Available knowledge", st.ByKind(store.KindKnowledge), FetchHint)
+
+	// Only the local rules are eager, so they are the whole budgeted payload.
+	local := bootstrap.Composed{Rules: localRules}
+	if full := local.RenderWithin(0, FetchHint); len(head)+len(full.Body)+len(menus) <= InstructionsBudget {
+		return strings.TrimRight(head+full.Body+menus, "\n") + "\n"
+	}
+
+	// Menus dropped. If the local rules alone still overrun, excerpt them and say so.
+	avail := InstructionsBudget - len(head)
+	if ex := local.RenderWithin(avail, FetchHint); ex.Complete {
+		return strings.TrimRight(head+ex.Body, "\n") + "\n" +
+			"\nThe skills and knowledge menus were omitted for length — use the `list` tool to see them.\n"
+	}
+	ex := local.RenderWithin(avail-noticeReserve, FetchHint)
+	return strings.TrimRight(head+excerptNotice(ex)+ex.Body, "\n") + "\n"
+}
+
+// intro opens the instructions. It states that the rules are binding before any
+// of them appear, because a client that caps this field cuts from the end: what
+// is written first is what survives.
+const intro = "contour provides the centralised rules, skills and knowledge for this session.\n" +
+	"The rules below are already in effect — follow them eagerly, without being asked.\n" +
+	"Use the `list`, `search` and `get` tools to pull anything else on demand.\n\n"
+
+// excerptNotice tells the agent that what follows is partial, how partial, and
+// what to do about it.
+//
+// The sizes are stated deliberately. An agent told only "more rules exist" has
+// no way to judge whether fetching them is worth a tool call; an agent told that
+// it is holding 1,400 of 5,500 characters knows it is missing most of its
+// instructions. It goes above the rules for the same reason as the intro — a
+// directive that trails the content it describes is the first thing a capping
+// client discards.
+func excerptNotice(ex bootstrap.Excerpt) string {
+	var b strings.Builder
+	b.WriteString("## INCOMPLETE — call the `bootstrap` tool now\n\n")
+	fmt.Fprintf(&b, "These rules are binding, but only part of them fits here: %d of %d characters (%d of %d rules).\n",
+		ex.ShownChars, ex.TotalChars, ex.ShownRules, ex.TotalRules)
+	if !ex.MenusIncluded {
+		b.WriteString("The skills and knowledge menus are omitted entirely.\n")
+	}
+	b.WriteString("Call the `bootstrap` tool before your first action to load the complete rules. Do not rely on the excerpt below.\n\n")
+	return b.String()
 }
 
 // writeNoProfileNotice explains how to select an entry point when the server was

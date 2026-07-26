@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -323,5 +324,156 @@ func TestRender(t *testing.T) {
 
 	if strings.Contains(out, "rules/js/010-style") {
 		t.Error("Render included a rule the profile never selected")
+	}
+}
+
+// bigRoot builds a store whose eager rules comfortably exceed any sane budget.
+func bigRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	write(t, root, "bootstrap/python.md",
+		"---\ndescription: Python\nrules: [general, python]\nskills: [python]\n---\nPreamble.")
+	for i := 1; i <= 6; i++ {
+		body := strings.Repeat("Wrap every error with context so the trace survives. ", 12)
+		write(t, root, fmt.Sprintf("rules/python/0%d0-r%d.md", i, i),
+			fmt.Sprintf("---\ndescription: rule %d\n---\n%s", i, body))
+	}
+	write(t, root, "skills/python/release/SKILL.md", "---\ndescription: release\n---\nSteps")
+	return root
+}
+
+// A payload that fits must be delivered byte-for-byte, with no notice warranted.
+func TestRenderWithinPassesThroughWhenItFits(t *testing.T) {
+	c := compose(t, testRoot(t), "python")
+	full := c.Render("get <id>")
+
+	ex := c.RenderWithin(len(full)+100, "get <id>")
+	if !ex.Complete {
+		t.Error("Complete = false for a payload that fits")
+	}
+	if ex.Body != full {
+		t.Error("a fitting payload was altered")
+	}
+	if ex.ShownChars != ex.TotalChars || ex.ShownRules != ex.TotalRules {
+		t.Errorf("counts disagree for a complete payload: %+v", ex)
+	}
+}
+
+// The excerpt must actually respect the budget, and must report honest numbers.
+func TestRenderWithinRespectsBudget(t *testing.T) {
+	c := compose(t, bigRoot(t), "python")
+	full := c.Render("get <id>")
+
+	const budget = 900
+	ex := c.RenderWithin(budget, "get <id>")
+
+	if ex.Complete {
+		t.Fatalf("Complete = true although the payload is %d chars", len(full))
+	}
+	if len(ex.Body) > budget {
+		t.Errorf("body is %d chars, over the %d budget", len(ex.Body), budget)
+	}
+	if ex.ShownChars != len(ex.Body) {
+		t.Errorf("ShownChars = %d, body is %d", ex.ShownChars, len(ex.Body))
+	}
+	if ex.TotalChars != len(full) {
+		t.Errorf("TotalChars = %d, want %d (what `contour bootstrap` prints)", ex.TotalChars, len(full))
+	}
+	if ex.ShownRules >= ex.TotalRules || ex.ShownRules == 0 {
+		t.Errorf("expected a partial rule set, got %d of %d", ex.ShownRules, ex.TotalRules)
+	}
+}
+
+// Rules are included whole: a body cut mid-sentence can invert its own meaning,
+// so every rule present must carry its complete text.
+func TestRenderWithinKeepsRulesWhole(t *testing.T) {
+	root := bigRoot(t)
+	c := compose(t, root, "python")
+	ex := c.RenderWithin(900, "get <id>")
+
+	for _, it := range c.Rules {
+		if !strings.Contains(ex.Body, "## "+it.ID) {
+			continue // this rule was dropped, which is allowed
+		}
+		if !strings.Contains(ex.Body, it.Body) {
+			t.Errorf("%s appears in the excerpt without its full body", it.ID)
+		}
+	}
+}
+
+// Local rules are authoritative on conflict. Dropping them in favour of the
+// central rules they exist to override would make a session wrong, not merely
+// short — so they get first claim on the budget.
+func TestRenderWithinPrefersLocalRules(t *testing.T) {
+	root := bigRoot(t)
+	write(t, root, ".contour/rules/010-local.md",
+		"---\ndescription: local\n---\nAlways use the project logger.")
+
+	p, err := LoadProfile(root, "python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.LoadLayered(root, filepath.Join(root, ".contour"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := Compose([]Profile{p}, st).RenderWithin(700, "get <id>")
+
+	if ex.Complete {
+		t.Fatal("expected an excerpt")
+	}
+	if !strings.Contains(ex.Body, "Always use the project logger.") {
+		t.Errorf("the local rule was dropped in favour of central ones:\n%s", ex.Body)
+	}
+}
+
+// Menus must never displace a rule. They are rendered only from what is left
+// after the rules have taken what they need, because the list tool reproduces a
+// menu on demand while a rule body has no other eager route to the agent.
+func TestRenderWithinMenusNeverCostARule(t *testing.T) {
+	const budget = 900
+
+	lean := compose(t, bigRoot(t), "python")
+
+	// The same store, but with a menu far too large for the leftover budget.
+	root := bigRoot(t)
+	for i := 1; i <= 12; i++ {
+		write(t, root, fmt.Sprintf("skills/python/s%d/SKILL.md", i),
+			fmt.Sprintf("---\ndescription: a reasonably wordy skill description number %d\n---\nSteps", i))
+	}
+	fat := compose(t, root, "python")
+
+	a := lean.RenderWithin(budget, "get <id>")
+	b := fat.RenderWithin(budget, "get <id>")
+
+	if a.ShownRules != b.ShownRules {
+		t.Errorf("menu size changed the rule count: %d with a small menu, %d with a large one",
+			a.ShownRules, b.ShownRules)
+	}
+	if b.MenusIncluded {
+		t.Error("a menu too large for the leftover budget was included")
+	}
+	if strings.Contains(b.Body, "# Available skills") {
+		t.Error("MenusIncluded is false but a menu was rendered")
+	}
+	if len(b.Body) > budget {
+		t.Errorf("body is %d chars, over the %d budget", len(b.Body), budget)
+	}
+}
+
+// A budget too small even for one rule must still produce honest output rather
+// than a half-rule or a panic.
+func TestRenderWithinTinyBudget(t *testing.T) {
+	c := compose(t, bigRoot(t), "python")
+	ex := c.RenderWithin(10, "get <id>")
+
+	if ex.Complete {
+		t.Error("Complete = true for a 10-char budget")
+	}
+	if ex.ShownRules != 0 {
+		t.Errorf("ShownRules = %d, want 0", ex.ShownRules)
+	}
+	if strings.Contains(ex.Body, "Wrap every error") {
+		t.Error("a rule body leaked into an excerpt that cannot hold one")
 	}
 }
