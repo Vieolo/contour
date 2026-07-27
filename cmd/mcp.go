@@ -43,6 +43,9 @@ var mcpCmd = &cobra.Command{
 		if len(profiles) == 0 {
 			profiles = cfgBootstrap
 		}
+		// Publish them for the bootstrap tool, which serves this session's
+		// payload rather than accepting profile names from the agent.
+		mcpProfiles = profiles
 
 		if config.Dev {
 			fmt.Fprintf(os.Stderr, "[%s build] contour mcp: store=%s profiles=%q\n",

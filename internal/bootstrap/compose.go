@@ -149,6 +149,14 @@ func anyStoreItemHasTag(st *store.Store, kinds []store.Kind, tag string) bool {
 // "contour get <id>") and is omitted when empty. Both the CLI and the MCP server
 // render through here so the two surfaces stay consistent.
 func (c Composed) Render(fetchHint string) string {
+	storeRules, localRules := partitionBySource(c.Rules)
+	return c.render(storeRules, localRules, true, fetchHint)
+}
+
+// render builds the payload from an explicit choice of rules, so a budgeted
+// excerpt and the complete payload are produced by the same code and cannot
+// drift in wording or layout.
+func (c Composed) render(storeRules, localRules []store.Item, withMenus bool, fetchHint string) string {
 	var b strings.Builder
 
 	// Each active profile's preamble, in profile order. They are separate
@@ -160,17 +168,107 @@ func (c Composed) Render(fetchHint string) string {
 		}
 	}
 
-	storeRules, localRules := partitionBySource(c.Rules)
 	if len(storeRules) > 0 {
 		b.WriteString("# Rules\n\n")
 		writeRules(&b, storeRules)
 	}
 	b.WriteString(RenderLocalRules(localRules))
 
-	writeMenu(&b, "Available skills", c.Skills, fetchHint)
-	writeMenu(&b, "Available knowledge", c.Knowledge, fetchHint)
+	if withMenus {
+		writeMenu(&b, "Available skills", c.Skills, fetchHint)
+		writeMenu(&b, "Available knowledge", c.Knowledge, fetchHint)
+	}
 
-	return strings.TrimRight(b.String(), "\n") + "\n"
+	// Nothing to say renders as nothing, not as a stray newline that would space
+	// out whatever a caller concatenates around it.
+	out := strings.TrimRight(b.String(), "\n")
+	if out == "" {
+		return ""
+	}
+	return out + "\n"
+}
+
+// Excerpt is a rendering of a composed profile trimmed to fit a character
+// budget, together with what it had to leave out.
+//
+// It exists because the MCP `instructions` field is not a delivery guarantee.
+// The specification calls it a hint that a client "may" add to the system
+// prompt, and clients cap it — so a payload that outgrows the cap is cut from
+// the end, silently. Sending a known-good excerpt and stating what is missing is
+// strictly better than sending everything and hoping.
+type Excerpt struct {
+	// Body is the rendered payload, at most the requested budget unless even the
+	// minimum content exceeds it.
+	Body string
+
+	// Complete reports whether Body is the whole payload. When true, every other
+	// field describes the full content and no notice is warranted.
+	Complete bool
+
+	// ShownRules and TotalRules count the rules included versus selected.
+	ShownRules, TotalRules int
+
+	// ShownChars and TotalChars are the size of Body versus the complete payload
+	// as rendered for this surface. They are close to, but not identical with,
+	// what `contour bootstrap` prints: the CLI passes a different fetch hint. The
+	// figures exist to convey magnitude to an agent, not to be reconciled
+	// byte-for-byte against another command's output.
+	ShownChars, TotalChars int
+
+	// MenusIncluded reports whether the skills and knowledge menus survived. They
+	// are dropped first: the list tool reproduces them on demand, while a rule
+	// body has no other eager route to the agent.
+	MenusIncluded bool
+}
+
+// RenderWithin renders the payload trimmed to fit budget characters.
+//
+// Rules are included whole or not at all — half a rule is worse than a missing
+// one, since a body cut mid-sentence can invert its own meaning. Project-local
+// rules get first claim on the budget: they are authoritative on conflict, so
+// dropping them in favour of central rules they are meant to override would
+// deliver a session that is not merely incomplete but wrong.
+func (c Composed) RenderWithin(budget int, fetchHint string) Excerpt {
+	full := c.Render(fetchHint)
+	ex := Excerpt{
+		Body:          full,
+		Complete:      true,
+		ShownRules:    len(c.Rules),
+		TotalRules:    len(c.Rules),
+		ShownChars:    len(full),
+		TotalChars:    len(full),
+		MenusIncluded: true,
+	}
+	if budget <= 0 || len(full) <= budget {
+		return ex
+	}
+
+	storeRules, localRules := partitionBySource(c.Rules)
+
+	// Local rules first, dropping from the end only if they alone overrun.
+	nLocal := len(localRules)
+	for nLocal > 0 && len(c.render(nil, localRules[:nLocal], false, fetchHint)) > budget {
+		nLocal--
+	}
+	// Then as many central rules as still fit, in profile order.
+	nStore := 0
+	for nStore < len(storeRules) &&
+		len(c.render(storeRules[:nStore+1], localRules[:nLocal], false, fetchHint)) <= budget {
+		nStore++
+	}
+
+	body := c.render(storeRules[:nStore], localRules[:nLocal], false, fetchHint)
+	menus := false
+	if withMenus := c.render(storeRules[:nStore], localRules[:nLocal], true, fetchHint); len(withMenus) <= budget {
+		body, menus = withMenus, true
+	}
+
+	ex.Body = body
+	ex.Complete = false
+	ex.ShownRules = nStore + nLocal
+	ex.ShownChars = len(body)
+	ex.MenusIncluded = menus
+	return ex
 }
 
 // RenderLocalRules renders the eager "project rules" section for a set of local

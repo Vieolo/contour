@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/vieolo/contour/internal/bootstrap"
 )
 
 func TestToolErrorRendersJSON(t *testing.T) {
@@ -43,5 +45,28 @@ func TestToolErrorAsTarget(t *testing.T) {
 	}
 	if te.Status != StatusNotFound {
 		t.Errorf("status = %q, want %q", te.Status, StatusNotFound)
+	}
+}
+
+// The notice and its closer are written into space reserved for them. If they
+// outgrow that reserve the instructions overrun the budget, which is the exact
+// failure the budget exists to prevent — so the reserve is checked against the
+// real strings at their widest.
+func TestNoticeReserveCoversTheNotice(t *testing.T) {
+	// Six-figure counts are far past anything realistic, so this is the widest
+	// the numbers can plausibly render.
+	ex := bootstrap.Excerpt{
+		ShownRules: 999999, TotalRules: 999999,
+		ShownChars: 999999, TotalChars: 999999,
+		MenusIncluded: false,
+	}
+	if n := len(excerptNotice(ex)) + len(excerptCloser(ex)); n > noticeReserve {
+		t.Errorf("notice + closer is %d chars, over the %d reserved", n, noticeReserve)
+	}
+
+	// And the singular wording, which must also fit.
+	one := bootstrap.Excerpt{ShownRules: 1, TotalRules: 2, ShownChars: 10, TotalChars: 20}
+	if n := len(excerptNotice(one)) + len(excerptCloser(one)); n > noticeReserve {
+		t.Errorf("singular notice + closer is %d chars, over the %d reserved", n, noticeReserve)
 	}
 }
