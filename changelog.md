@@ -1,5 +1,10 @@
 # Change Log
 
+## v0.2.3 (2026-07-27)
+- Added the `bootstrap` MCP tool, returning the complete session payload. It will return every rule in effect plus the full skills and knowledge menu.
+- Usage logging records a `bootstrap` event, so `contour stats` can show whether agents act on an incomplete-instructions notice
+- Fixed the situation where the eager rules were silently truncated in MCP sessions. Long rules used to be silently truncated on startup and now, the startup introduction will tell the agent the exact size of the total eager rules and instruct it to run the bootstrap tool to get all the rules
+
 ## v0.2.2 (2026-07-26)
 - Added support for the per-project config to `.contour.yaml` at the project root
 - Added support for loading the per-project context files from `.contour`, `.agents` and `.claude` folders, layered over the central store. Local items are always active, and are authoritative where they conflict with a central item
