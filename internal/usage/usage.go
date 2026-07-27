@@ -120,6 +120,16 @@ func (l *Logger) Search(query, kind string, results int) {
 	l.record(Event{Type: "search", Query: query, Kind: kind, Results: &results})
 }
 
+// Bootstrap records that the agent loaded the full session payload. It is the
+// signal for whether an agent acts on an incomplete-instructions notice, which
+// is the only way to tell a truncated session from a well-behaved one.
+func (l *Logger) Bootstrap() {
+	if l == nil {
+		return
+	}
+	l.record(Event{Type: "bootstrap"})
+}
+
 // List records a list, optionally filtered by kind.
 func (l *Logger) List(kind string) {
 	if l == nil {
