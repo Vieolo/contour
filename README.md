@@ -43,6 +43,7 @@ Write a rule once; every project and every session can reach it.
     - [Wiring it up](#wiring-it-up)
     - [Choosing the profile](#choosing-the-profile)
     - [What the agent gets](#what-the-agent-gets)
+    - [When the rules don't fit](#when-the-rules-dont-fit)
   - [Seeing what your profiles offer](#seeing-what-your-profiles-offer)
   - [Improving the store with usage stats](#improving-the-store-with-usage-stats)
     - [Privacy](#privacy)
@@ -565,13 +566,65 @@ Started without one, the server still serves the whole store through its tools, 
 - every rule those profiles select, in full
 - a menu of the available skills and knowledge, one line each
 
-**On demand**, through three tools:
+**On demand**, through four tools:
 
 | Tool | Does |
 |---|---|
+| `bootstrap` | Load the complete set of rules in effect, plus the full menu |
 | `list` | List available items, optionally filtered by kind |
 | `get` | Read one item's full content by ID |
 | `search` | Find items by ID, description, tag or content |
+
+### When the rules don't fit
+
+The MCP `instructions` field is not a delivery guarantee. The specification
+calls it a hint that a client *may* add to the system prompt, and clients cap
+how much of it they keep — cutting from the end. A store whose eager rules grow
+past that cap would lose its last rules with nothing to show for it.
+
+So contour sends only what it knows will fit, and says what it withheld:
+
+```
+## INCOMPLETE — `bootstrap` must be your FIRST tool call
+
+Shown: 915 of 1948 characters, 3 of 7 rules. The other 4 rules are in force and you have not been told what they say.
+
+Call `bootstrap` now — literally your next call, before reading a file, searching, planning or replying.
+"Before the first important action" is the wrong reading: you cannot know which actions the missing rules govern.
+What follows is a partial sample, not your instructions.
+
+...the rules that fit...
+
+— end of sample: 4 of 7 rules withheld. Call `bootstrap` before doing anything else. —
+```
+
+The details matter:
+
+- **The notice comes first.** A capping client cuts from the end, so a directive
+  placed after the rules would be the first thing discarded.
+- **The sizes are stated.** An agent told only that "more rules exist" cannot
+  judge whether fetching them is worth a tool call. One told it is holding 915
+  of 1,948 characters knows it is missing most of its instructions.
+- **The wording names a specific event, and rejects the wrong reading.** An
+  earlier version said "call `bootstrap` before your first action", and agents
+  reliably read that as *before the first important action* and deferred it
+  indefinitely — "action" is elastic, and an excerpt that looks like a usable
+  rule set makes postponing feel safe. The directive now anchors to the first
+  *tool call*, which cannot be reinterpreted, and says why deferring is not a
+  judgement the agent is positioned to make: it cannot know which actions the
+  unseen rules govern.
+- **The sample is bracketed.** The notice is read before the rules; by the end of
+  them the agent has accumulated plausible guidance and may have stopped treating
+  the gap as real, so the closing line restates it.
+- **Rules are included whole or not at all.** A body cut mid-sentence can invert
+  its own meaning — "never do X unless…" truncated to "never do X".
+- **Project-local rules get first claim.** They are authoritative on conflict, so
+  dropping them in favour of the central rules they exist to override would make
+  a session wrong, not merely short.
+- **Menus are sacrificed before rules.** The `list` tool reproduces a menu on
+  demand; a rule body has no other eager route into the session.
+
+A store that fits the budget is delivered exactly as before, with no notice.
 
 Edits to your store take effect on the next tool call, no need to restart the server after changing a file. The eagerly-loaded rules are fixed when the session starts, so changes to those apply from the next session.
 
