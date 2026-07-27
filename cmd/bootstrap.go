@@ -39,8 +39,11 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 	Description: "Load the complete set of rules in effect for this session, plus the " +
 		"catalogue of skills and knowledge available on demand. The server's instructions " +
 		"may carry only an excerpt, because the client limits how much they can hold — " +
-		"call this to get the whole thing. Call it before acting when the instructions " +
-		"say they are incomplete.",
+		"this returns the whole thing.\n\n" +
+		"If those instructions say they are incomplete, call this FIRST: before reading " +
+		"a file, searching, planning or replying, and before any other tool. Not merely " +
+		"before some later significant step — the rules you have not seen may govern the " +
+		"very next thing you do, so there is no safe point at which to defer it.",
 	Args: cobra.ArbitraryArgs,
 
 	CLICommand: func(cmd *cobra.Command, args []string) error {

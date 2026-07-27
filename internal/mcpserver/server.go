@@ -36,10 +36,16 @@ const FetchHint = "the `get` tool with the item's ID"
 // client, so the budget is set below the smallest one observed rather than at it.
 const InstructionsBudget = 1900
 
-// noticeReserve is the room set aside for the excerpt notice. It is only
-// deducted once the payload is known not to fit, so a store that fits keeps its
-// full budget.
-const noticeReserve = 460
+// noticeReserve is the room set aside for the excerpt notice and its closing
+// marker. It is only deducted once the payload is known not to fit, so a store
+// within budget keeps the whole of it.
+//
+// Every character here is one the rules do not get, and rules are taken whole,
+// so over-reserving by even a little can cost an entire rule. It is therefore
+// sized just above the widest the strings can actually render — 623 characters
+// at implausible six-figure counts — rather than guessed generously.
+// TestNoticeReserveCoversTheNotice keeps the two in step.
+const noticeReserve = 640
 
 // Options configures the server.
 type Options struct {
@@ -134,11 +140,15 @@ func BuildInstructions(opts Options) (string, error) {
 	// anything, so a store within budget is delivered exactly as before.
 	avail := InstructionsBudget - len(intro)
 	ex := composed.RenderWithin(avail, FetchHint)
-	if !ex.Complete {
-		ex = composed.RenderWithin(avail-noticeReserve, FetchHint)
-		b.WriteString(excerptNotice(ex))
+	if ex.Complete {
+		b.WriteString(ex.Body)
+		return b.String(), nil
 	}
+
+	ex = composed.RenderWithin(avail-noticeReserve, FetchHint)
+	b.WriteString(excerptNotice(ex))
 	b.WriteString(ex.Body)
+	b.WriteString(excerptCloser(ex))
 	return b.String(), nil
 }
 
@@ -170,7 +180,7 @@ func noProfileInstructions(head string, st *store.Store) string {
 			"\nThe skills and knowledge menus were omitted for length — use the `list` tool to see them.\n"
 	}
 	ex := local.RenderWithin(avail-noticeReserve, FetchHint)
-	return strings.TrimRight(head+excerptNotice(ex)+ex.Body, "\n") + "\n"
+	return strings.TrimRight(head+excerptNotice(ex)+ex.Body+excerptCloser(ex), "\n") + "\n"
 }
 
 // intro opens the instructions. It states that the rules are binding before any
@@ -184,21 +194,54 @@ const intro = "contour provides the centralised rules, skills and knowledge for 
 // what to do about it.
 //
 // The sizes are stated deliberately. An agent told only "more rules exist" has
-// no way to judge whether fetching them is worth a tool call; an agent told that
-// it is holding 1,400 of 5,500 characters knows it is missing most of its
+// no way to judge whether fetching them is worth a tool call; an agent told it
+// is holding 1,158 of 6,055 characters knows it is missing most of its
 // instructions. It goes above the rules for the same reason as the intro — a
 // directive that trails the content it describes is the first thing a capping
 // client discards.
+//
+// The wording is the product of watching it fail. "Call bootstrap before your
+// first action" was read as "before the first *important* action", and deferred
+// indefinitely: "action" is elastic, and an excerpt that looks like a usable
+// rule set makes postponing feel safe. So the directive now names a specific
+// event that cannot be reinterpreted — the first tool call — rejects the wrong
+// reading in so many words, and says why deferring is not a judgement the agent
+// is in a position to make: it cannot know which actions the unseen rules
+// govern.
 func excerptNotice(ex bootstrap.Excerpt) string {
 	var b strings.Builder
-	b.WriteString("## INCOMPLETE — call the `bootstrap` tool now\n\n")
-	fmt.Fprintf(&b, "These rules are binding, but only part of them fits here: %d of %d characters (%d of %d rules).\n",
-		ex.ShownChars, ex.TotalChars, ex.ShownRules, ex.TotalRules)
+	b.WriteString("## INCOMPLETE — `bootstrap` must be your FIRST tool call\n\n")
+
+	missing := ex.TotalRules - ex.ShownRules
+	fmt.Fprintf(&b, "Shown: %d of %d characters, %d of %d rules. The other %d %s in force and you have not been told what they say.\n",
+		ex.ShownChars, ex.TotalChars, ex.ShownRules, ex.TotalRules,
+		missing, plural(missing, "rule is", "rules are"))
 	if !ex.MenusIncluded {
 		b.WriteString("The skills and knowledge menus are omitted entirely.\n")
 	}
-	b.WriteString("Call the `bootstrap` tool before your first action to load the complete rules. Do not rely on the excerpt below.\n\n")
+
+	b.WriteString("\nCall `bootstrap` now — literally your next call, before reading a file, searching, planning or replying.\n")
+	b.WriteString("\"Before the first important action\" is the wrong reading: you cannot know which actions the missing rules govern.\n")
+	b.WriteString("What follows is a partial sample, not your instructions.\n\n")
 	return b.String()
+}
+
+// excerptCloser repeats the directive where the excerpt ends. The notice at the
+// top is read before the rules; by the end of them an agent has accumulated
+// plausible-looking guidance and may have stopped treating the gap as real.
+// Bracketing the sample keeps its incompleteness visible at the point it would
+// otherwise be forgotten.
+func excerptCloser(ex bootstrap.Excerpt) string {
+	missing := ex.TotalRules - ex.ShownRules
+	return fmt.Sprintf("\n— end of sample: %d of %d %s withheld. Call `bootstrap` before doing anything else. —\n",
+		missing, ex.TotalRules, plural(missing, "rule", "rules"))
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // writeNoProfileNotice explains how to select an entry point when the server was
