@@ -37,6 +37,7 @@ Write a rule once; every project and every session can reach it.
     - [Overlay folders](#overlay-folders)
     - [Local wins on conflict](#local-wins-on-conflict)
     - [Single files (CLAUDE.md, AGENTS.md)](#single-files-claudemd-agentsmd)
+    - [Or in your go.yaml](#or-in-your-goyaml)
     - [Gradual migration](#gradual-migration)
   - [CLI reference](#cli-reference)
   - [Using contour with Claude Code](#using-contour-with-claude-code)
@@ -404,6 +405,53 @@ eager_files:
 `contour mcp-init` writes this file for you and detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
 
 The config lives at the project **root** (`.contour.yaml`), not inside an overlay folder, so moving your local rules from `.contour/` to `.agents/` later never silently drops it — the same reason the machine-wide config sits outside the store.
+
+### Or in your go.yaml
+
+A Go project that already keeps a [`go.yaml`](https://github.com/vieolo/godotyaml) does not need a second config file. contour reads its settings from that file's `external.contour` section, which is where the go.yaml spec puts third-party tool configuration:
+
+```yaml
+name: myproject
+version: 1.2.3
+
+external:
+  gomore:
+    commands:
+      build: "go build ./..."
+  contour:
+    bootstrap: [python, cli]
+    eager_files:
+      - AGENTS.md
+```
+
+The fields are identical to `.contour.yaml`; only their location differs. `contour mcp-init` detects an existing `go.yaml` and writes there instead, leaving the rest of the file — its metadata, other tools' sections, key order and comments — untouched.
+
+**`.contour.yaml` always wins.** If a project has one, that is the config, and any
+contour section in a host manifest is ignored. Being contour's own file makes it
+the unambiguous statement of intent — and the rule stays a single comparison as
+more manifests are supported (`pyproject.toml` and `package.json` are the
+obvious next ones). Were a manifest to win instead, every new one would have to
+be ranked against all the others.
+
+When a host section is shadowed this way, contour names it on stderr rather than
+leaving you to wonder which file is in effect.
+
+**A bare `go.yaml` changes nothing.** contour only reads from a manifest that
+actually has a contour section. A project keeps its `go.yaml` for reasons of its
+own, so adding one must never be mistaken for a contour config — nor disturb the
+`.contour.yaml` beside it. And a `go.yaml` contour cannot parse is the project's
+file, not contour's: it degrades to a warning rather than breaking every command.
+
+So the precedence, in full:
+
+| Project has | contour reads |
+|---|---|
+| `.contour.yaml` only | `.contour.yaml` |
+| `go.yaml` with `external.contour` | that section |
+| both | `.contour.yaml`, and says the other is ignored |
+| `go.yaml` without a contour section | nothing — no config |
+
+`mcp-init` writes to whichever of these will be read, so it never files settings somewhere permanently shadowed.
 
 ### Gradual migration
 

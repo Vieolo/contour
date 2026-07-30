@@ -29,6 +29,9 @@ var mcpInitCmd = &cobra.Command{
 	Long: "Set this project up for contour: write the MCP config so an agent " +
 		"starts contour, and a project config that pins the profiles and lists any " +
 		"files to load eagerly.\n\n" +
+		"The project config goes in the project's go.yaml, under external.contour, " +
+		"if it has one — a Go project need not carry a second config file. " +
+		"Otherwise it is written to .contour.yaml at the project root.\n\n" +
 		"The MCP entry (in " + mcpconfig.DefaultFile + ") records contour's " +
 		"absolute path — an agent launches its servers without a login shell, so a " +
 		"bare `contour` would not resolve — and a bare `mcp` command, because the " +
