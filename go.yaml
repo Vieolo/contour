@@ -6,3 +6,6 @@ external:
   gomore:
     commands:
       local-install: "go build -tags dev -o $GOPATH/bin/contour-dev main.go"
+  contour:
+    bootstrap: [go]
+    eager_files: []
