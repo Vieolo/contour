@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -22,6 +23,13 @@ func projectContext() (overlays []string, eagerFiles []store.EagerFile, bootstra
 	if cfg, err := project.Load(wd); err == nil {
 		eagerFiles = cfg.EagerFiles
 		bootstrap = cfg.Bootstrap
+		// Config that was found but not used is worth saying out loud — silently
+		// ignoring a second config file is how a project ends up mystified about
+		// which settings are in force. Diagnostics go to stderr, leaving stdout
+		// clean for a piped payload and pure for the MCP protocol.
+		for _, w := range cfg.Warnings {
+			fmt.Fprintf(os.Stderr, "contour: %s\n", w)
+		}
 	}
 	return overlays, eagerFiles, bootstrap
 }
