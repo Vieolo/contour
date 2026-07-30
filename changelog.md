@@ -1,5 +1,8 @@
 # Change Log
 
+## v0.2.4 (2026-07-30)
+- A Go project that keeps a `go.yaml` can hold contour's per-project settings in its `external.contour` section instead of a separate `.contour.yaml`. The fields are unchanged. `contour mcp-init` detects an existing `go.yaml` and writes there, preserving the rest of the file. `.contour.yaml` takes precedence over any such host manifest
+
 ## v0.2.3 (2026-07-27)
 - Added the `bootstrap` MCP tool, returning the complete session payload. It will return every rule in effect plus the full skills and knowledge menu.
 - Usage logging records a `bootstrap` event, so `contour stats` can show whether agents act on an incomplete-instructions notice
