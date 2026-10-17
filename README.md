@@ -377,6 +377,18 @@ Three folder names, because teams already keep agent context in different places
 
 Overlay items are **always active** for the project: local rules load eagerly, local skills and knowledge join the on-demand menu, no tags needed. Being local is scope enough.
 
+To start one, run this from the project root:
+
+```bash
+contour init --local
+```
+
+It creates `.agents/` with empty `rules/`, `skills/` and `knowledge/` folders (each holding a `.gitkeep`, since git does not track empty folders) and a README documenting the formats. Commit it, and the whole project shares it.
+
+There are **no sample files**, and that is deliberate. A sample in the central store is inert until a profile selects it; a local item is live the moment it exists. A sample rule would load into every session in the project, ahead of your central rules. So the examples live in the README, which contour never reads: it only looks inside the three kind folders.
+
+`.agents/` is the default because it is vendor-neutral. If the project already has a local store in any overlay folder, `init --local` leaves it alone rather than splitting the project's context across two places. And since other tools use `.agents/` too, it scaffolds alongside their files without overwriting any. It never touches the central store either, so a project can run on local context alone.
+
 ### Local wins on conflict
 
 When a local item and a central one clash, the local one is authoritative. contour states this to the agent rather than trying to detect clashes itself, so it covers semantic conflicts too:
@@ -467,7 +479,7 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 | `contour get <id>` | Print one item's content. Body only, so it pipes cleanly. |
 | `contour search <query> [kind]` | Search IDs, descriptions, tags and content, case-insensitively. |
 | `contour bootstrap [name...]` | Print the session payload for one or more profiles, composed in the order given. Without a name, list the available profiles. |
-| `contour init` | Create the store explicitly. Optional, contour creates it on first use. Only ever creates: on an existing store it changes nothing, so samples you deleted stay deleted. |
+| `contour init` | Create the store explicitly. Optional, contour creates it on first use. Only ever creates: on an existing store it changes nothing, so samples you deleted stay deleted. `--local` creates a project-local store in `./.agents` instead. |
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |

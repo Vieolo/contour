@@ -23,6 +23,12 @@ type Store struct {
 // other tools.
 var OverlayDirNames = []string{".contour", ".agents", ".claude"}
 
+// DefaultOverlayDir is the overlay contour creates when it scaffolds a local
+// store. .agents is the vendor-neutral choice: .contour ties the project's
+// context to one tool, and .claude/skills is already read by Claude Code
+// itself, so local skills put there would be offered twice.
+const DefaultOverlayDir = ".agents"
+
 // EagerFile is a file listed in a project config to be loaded eagerly as a local
 // rule — a CLAUDE.md or AGENTS.md a project already keeps, without restructuring
 // it into the rules/ layout.

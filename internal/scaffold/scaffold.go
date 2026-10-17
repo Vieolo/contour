@@ -54,6 +54,49 @@ func Create(path string) (bool, error) {
 	return true, nil
 }
 
+// gitKeep holds an otherwise empty kind directory in git, which tracks files,
+// not directories. The loader reads only .md files, so it is never an item.
+const gitKeep = ".gitkeep"
+
+// CreateLocal gives the project at projectDir a local store — the overlay
+// contour merges over the central store when it runs there — returning the
+// overlay in effect and whether this call created it.
+//
+// A project that already has one is left as it is, and its overlay returned.
+// "Already has one" means any recognised overlay folder holding a rules/,
+// skills/ or knowledge/ directory. It cannot mean "the folder exists": .agents/
+// and .claude/ are shared with other tools, so their presence says nothing
+// about contour. For the same reason, scaffolding into an existing .agents/
+// never overwrites a file another tool put there.
+//
+// Unlike the central store, no sample items are written. A central sample is
+// inert until a profile selects it; a local item is live the moment it exists
+// — local rules load eagerly into every session in the project, ahead of the
+// central ones. A sample here would put placeholder text into real agent
+// context. The formats are documented in the overlay's README instead, which
+// the loader never reads: it looks only inside the kind directories.
+func CreateLocal(projectDir string) (string, bool, error) {
+	for _, name := range store.OverlayDirNames {
+		overlay := filepath.Join(projectDir, name)
+		for _, k := range store.Kinds {
+			if info, err := os.Stat(filepath.Join(overlay, string(k))); err == nil && info.IsDir() {
+				return overlay, false, nil
+			}
+		}
+	}
+
+	overlay := filepath.Join(projectDir, store.DefaultOverlayDir)
+	for _, k := range store.Kinds {
+		if err := writeIfAbsent(filepath.Join(overlay, string(k), gitKeep), ""); err != nil {
+			return "", false, err
+		}
+	}
+	if err := writeIfAbsent(filepath.Join(overlay, "README.md"), localReadmeSeed); err != nil {
+		return "", false, err
+	}
+	return overlay, true, nil
+}
+
 // HasContent reports whether path exists and holds anything at all. A path that
 // exists but is not a directory is an error: it can be neither a store nor the
 // place to create one.
@@ -77,9 +120,9 @@ func HasContent(path string) (bool, error) {
 }
 
 // writeIfAbsent writes body to path only when path does not already exist,
-// creating parent directories as needed. Create only seeds an empty directory,
-// so nothing should be there; this is a second line of defence, so that even a
-// race cannot make the scaffolder overwrite a user's file.
+// creating parent directories as needed. It is what lets CreateLocal scaffold
+// into a .agents/ another tool already uses without clobbering its files, and a
+// second line of defence for Create, which only seeds an empty directory.
 func writeIfAbsent(path, body string) error {
 	switch _, err := os.Stat(path); {
 	case err == nil:
