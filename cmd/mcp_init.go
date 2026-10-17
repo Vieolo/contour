@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/bootstrap"
@@ -26,20 +28,24 @@ var commonAgentFiles = []string{"AGENTS.md", "AGENT.md", "CLAUDE.md"}
 var mcpInitCmd = &cobra.Command{
 	Use:   "mcp-init",
 	Short: "Register contour as an MCP server in this project",
-	Long: "Set this project up for contour: write the MCP config so an agent " +
-		"starts contour, and a project config that pins the profiles and lists any " +
-		"files to load eagerly.\n\n" +
-		"The project config goes in the project's go.yaml, under external.contour, " +
-		"if it has one — a Go project need not carry a second config file. " +
-		"Otherwise it is written to .contour.yaml at the project root.\n\n" +
-		"The MCP entry (in " + mcpconfig.DefaultFile + ") records contour's " +
-		"absolute path — an agent launches its servers without a login shell, so a " +
-		"bare `contour` would not resolve — and a bare `mcp` command, because the " +
-		"profiles now live in the project config rather than the launch arguments.\n\n" +
-		"Pass --bootstrap to set a profile, repeating it to combine entry points " +
-		"(--bootstrap python --bootstrap cli). Any AGENTS.md or CLAUDE.md at the " +
-		"project root is detected and listed for eager loading; edit the config to " +
-		"change that.",
+	Long: "Register contour as an MCP server for this project on this machine, " +
+		"and give the project a contour config if it has none.\n\n" +
+		"The MCP entry (in " + mcpconfig.DefaultFile + ") is always written. It " +
+		"records contour's absolute path — an agent launches its servers without " +
+		"a login shell, so a bare `contour` would not resolve — which makes it " +
+		"specific to this machine: keep " + mcpconfig.DefaultFile + " out of git, " +
+		"and have each developer run this once.\n\n" +
+		"The project config pins the profiles and lists any files to load " +
+		"eagerly. It goes in the project's go.yaml, under external.contour, if it " +
+		"has one — a Go project need not carry a second config file — and " +
+		"otherwise in .contour.yaml at the project root. It is written only when " +
+		"the project has none: an existing config is the team's committed setup, " +
+		"and is never modified here. To change it, edit the file.\n\n" +
+		"Pass --bootstrap to choose the profiles for a new config, repeating it to " +
+		"combine entry points (--bootstrap python --bootstrap cli). Any AGENTS.md " +
+		"or CLAUDE.md at the project root is detected and listed for eager " +
+		"loading. Against an existing config, --bootstrap is accepted only if it " +
+		"names the profiles the config already selects.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// The path contour was launched from. Deliberately not resolved through
@@ -57,17 +63,26 @@ var mcpInitCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("determine the working directory: %w", err)
 		}
-		eager := detectEagerFiles(cwd)
-
-		// 1. The project config carries the profile and eager files, so the
-		//    settings live with the project and .mcp.json stays a bare launch.
-		cfgPath, err := project.Write(cwd, mcpInitProfiles, eager)
+		// 1. Give the project a config if it has none. An existing one is the
+		//    team's committed setup and is left alone — every developer runs
+		//    this command to register contour on their own machine, so it must
+		//    not be able to rewrite shared settings. Settled before .mcp.json is
+		//    touched, so a conflict leaves nothing half-done.
+		cfg, created, err := project.Ensure(cwd, mcpInitProfiles, detectEagerFiles(cwd))
+		if errors.Is(err, project.ErrProfileConflict) {
+			return fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+				"edit that file to switch profiles, or run without --bootstrap to just register contour on this machine",
+				cfg.Path, strings.Join(cfg.Bootstrap, ", "))
+		}
 		if err != nil {
 			return err
 		}
+		for _, w := range cfg.Warnings {
+			fmt.Fprintf(os.Stderr, "contour: %s\n", w)
+		}
 
-		// 2. Register the server with a bare `mcp`; the profile comes from the
-		//    config written above.
+		// 2. Register the server with a bare `mcp`; the profiles come from the
+		//    project config, not the launch arguments.
 		replaced, err := mcpconfig.Upsert(mcpInitFile, mcpInitName, mcpconfig.Entry{
 			Command: exe,
 			Args:    []string{"mcp"},
@@ -82,15 +97,28 @@ var mcpInitCmd = &cobra.Command{
 			termange.PrintSuccessf("Added the %q server to %s\n", mcpInitName, mcpInitFile)
 		}
 		termange.PrintInfof("  command: %s\n", exe)
-		termange.PrintInfof("  config:  %s\n", cfgPath)
-		for _, p := range mcpInitProfiles {
+		if created {
+			termange.PrintInfof("  config:  %s (created)\n", cfg.Path)
+		} else {
+			termange.PrintInfof("  config:  %s (existing, left unchanged)\n", cfg.Path)
+		}
+		for _, p := range cfg.Bootstrap {
 			termange.PrintInfof("  profile: %s\n", p)
 		}
-		for _, f := range eager {
-			termange.PrintInfof("  eager:   %s (detected)\n", f)
+		for _, f := range cfg.EagerFiles {
+			termange.PrintInfof("  eager:   %s\n", f.ID)
 		}
-		if len(mcpInitProfiles) == 0 {
-			termange.PrintWarningf("\nNo profile set — add `bootstrap: [<name>]` to %s (%s bootstrap lists them).\n", cfgPath, config.Program)
+
+		if len(cfg.Bootstrap) == 0 {
+			termange.PrintWarningf("\nNo profile set — add `bootstrap: [<name>]` to %s (%s bootstrap lists them).\n", cfg.Path, config.Program)
+		} else if !created {
+			// The config came from the team, but the store is this machine's. A
+			// profile missing here makes the MCP server fail to start, so say so
+			// now, at setup, rather than when an agent first connects.
+			if err := checkProfilesExist(cfg.Bootstrap); err != nil {
+				termange.PrintWarningf("\nThis project's profiles are not all in your store: %v\n"+
+					"The MCP server will not start until they are.\n", err)
+			}
 		}
 		return nil
 	},
@@ -98,7 +126,7 @@ var mcpInitCmd = &cobra.Command{
 
 func init() {
 	mcpInitCmd.Flags().StringSliceVar(&mcpInitProfiles, "bootstrap", nil,
-		"bootstrap profile to record in the project config (repeatable)")
+		"bootstrap profile for a new project config (repeatable)")
 	mcpInitCmd.Flags().StringVar(&mcpInitFile, "file", mcpconfig.DefaultFile,
 		"MCP config file to create or update")
 	mcpInitCmd.Flags().StringVar(&mcpInitName, "name", config.Program,

@@ -402,7 +402,7 @@ eager_files:
   - docs/architecture.md
 ```
 
-`contour mcp-init` writes this file for you and detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
+`contour mcp-init` writes this file for you when the project has none, and detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
 
 The config lives at the project **root** (`.contour.yaml`), not inside an overlay folder, so moving your local rules from `.contour/` to `.agents/` later never silently drops it — the same reason the machine-wide config sits outside the store.
 
@@ -451,7 +451,7 @@ So the precedence, in full:
 | both | `.contour.yaml`, and says the other is ignored |
 | `go.yaml` without a contour section | nothing — no config |
 
-`mcp-init` writes to whichever of these will be read, so it never files settings somewhere permanently shadowed.
+`mcp-init` only writes a config when the project has none, and puts it where it will be read — into `go.yaml` if the project keeps one, otherwise `.contour.yaml` — so it never files settings somewhere permanently shadowed, and never rewrites the ones already there.
 
 ### Gradual migration
 
@@ -471,7 +471,7 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
-| `contour mcp-init` | Set the project up: register contour in `.mcp.json` (absolute path, bare `mcp`) and write `.contour.yaml` with the profiles, detecting a root `AGENTS.md`/`CLAUDE.md`. Repeat `--bootstrap` to combine profiles. |
+| `contour mcp-init` | Register contour in `.mcp.json` on this machine (absolute path, bare `mcp`), and give the project a config if it has none — profiles from `--bootstrap`, plus a detected root `AGENTS.md`/`CLAUDE.md`. Never modifies an existing project config. |
 | `contour stats` | Show how agents have used the store: gaps (searched, found nothing), never-fetched items, and most-fetched. Local only; `--project`, `--days`, `--clear`. |
 | `contour version` | Print the version. |
 
@@ -535,8 +535,36 @@ contour mcp-init --bootstrap python
 
 That does two things: registers contour in `.mcp.json` (or adds it to the one
 you already have, leaving other servers untouched), and writes a
-`.contour.yaml` recording the profile. Commit both and everyone on the
-project gets the same context.
+`.contour.yaml` recording the profile.
+
+**Commit the project config; keep `.mcp.json` out of git.** The two files are
+different in kind. The project config is portable — a profile name means the
+same thing on every machine — so committing it gives everyone on the project
+the same context. `.mcp.json` is not: it holds the absolute path to *your*
+contour binary (see below), which is `/opt/homebrew/bin/contour` on one machine
+and something else on the next. Add it to `.gitignore`.
+
+Everyone else then runs, once, on their own machine:
+
+```bash
+contour mcp-init
+```
+
+That registers contour in their own `.mcp.json` and leaves the committed config
+exactly as it is. **`mcp-init` never modifies an existing project config** — it
+is the team's shared setup, and this command runs on every machine, so it must
+not be able to rewrite it as a side effect. To change the profiles, edit the
+config file, where the change shows up in review. Passing `--bootstrap` against
+an existing config is accepted only if it names the profiles the config already
+selects, so re-running the original setup command is harmless; anything else
+is refused before a file is touched.
+
+If a profile the project uses is missing from that developer's store,
+`mcp-init` says so — the server will not start without it.
+
+If your `.mcp.json` also carries servers the whole team shares, ignoring it
+costs you those too — in that case keep contour out of the shared file and
+register it per developer instead (see *Writing the files by hand* below).
 
 Repeat the flag to combine entry points:
 
@@ -602,7 +630,7 @@ bootstrap: [python, cli]
 
 A single profile can stay a bare name — `bootstrap: python` — and both forms are read the same way.
 
-`contour mcp-init --bootstrap <name>` writes that for you. The `--bootstrap` flag on `contour mcp` overrides it if you ever need to, and is repeatable. It belongs with the project rather than in the machine-wide config because the right profile depends on the project, not the machine.
+`contour mcp-init --bootstrap <name>` writes that for you when the project has no config yet; after that, edit the file. The `--bootstrap` flag on `contour mcp` overrides it if you ever need to, and is repeatable. It belongs with the project rather than in the machine-wide config because the right profile depends on the project, not the machine.
 
 Started without one, the server still serves the whole store through its tools, and its instructions explain how to select an entry point — a missing profile degrades gracefully rather than failing. Any project overlay rules still load, so a project can rely on local context alone.
 

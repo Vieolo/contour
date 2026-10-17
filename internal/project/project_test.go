@@ -1,6 +1,7 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -342,4 +343,137 @@ func TestWritePrefersAnExistingOwnFileOverAHost(t *testing.T) {
 	if want := []string{"new"}; !reflect.DeepEqual(cfg.Bootstrap, want) {
 		t.Errorf("round trip gave %v, want %v", cfg.Bootstrap, want)
 	}
+}
+
+// unchanged fails the test if the file at path no longer holds want, byte for
+// byte. An existing config must not merely parse back to the same values — it
+// must not be rewritten at all, or a teammate's comments and formatting go.
+func unchanged(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("%s was modified:\n--- want\n%s\n--- got\n%s", filepath.Base(path), want, got)
+	}
+}
+
+func TestEnsureCreatesAConfigWhenNoneExists(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg, created, err := Ensure(dir, []string{"python", "cli"}, []string{"AGENTS.md"})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if !created {
+		t.Error("created = false for a project with no config")
+	}
+	if cfg.Path != filepath.Join(dir, FileName) {
+		t.Errorf("Path = %q, want the new .contour.yaml", cfg.Path)
+	}
+	if want := []string{"python", "cli"}; !reflect.DeepEqual(cfg.Bootstrap, want) {
+		t.Errorf("Bootstrap = %v, want %v", cfg.Bootstrap, want)
+	}
+	if len(cfg.EagerFiles) != 1 || cfg.EagerFiles[0].ID != "AGENTS.md" {
+		t.Errorf("EagerFiles = %v, want [AGENTS.md]", cfg.EagerFiles)
+	}
+}
+
+// The case that motivated Ensure: every developer re-runs setup on their own
+// machine. With no profiles asked for, an existing config — in either place it
+// can live — must come through untouched, including eager files that setup
+// would otherwise have re-detected.
+func TestEnsureLeavesAnExistingConfigUntouched(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, body string
+	}{
+		{"own file", FileName,
+			"# the team's notes\nbootstrap: [go]   # chosen on purpose\n\neager_files:\n  - NOTES.md\n"},
+		{"go.yaml section", GoYAMLFile,
+			goYAML + "  contour:\n    # the team's notes\n    bootstrap: [go]\n    eager_files: [NOTES.md]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tc.file)
+			write(t, path, tc.body)
+
+			cfg, created, err := Ensure(dir, nil, []string{"AGENTS.md"})
+			if err != nil {
+				t.Fatalf("Ensure: %v", err)
+			}
+			if created {
+				t.Error("created = true for a project that already had a config")
+			}
+			if cfg.Path != path {
+				t.Errorf("Path = %q, want %q", cfg.Path, path)
+			}
+			unchanged(t, path, tc.body)
+			if want := []string{"go"}; !reflect.DeepEqual(cfg.Bootstrap, want) {
+				t.Errorf("Bootstrap = %v, want the existing %v", cfg.Bootstrap, want)
+			}
+			if len(cfg.EagerFiles) != 1 || cfg.EagerFiles[0].ID != "NOTES.md" {
+				t.Errorf("EagerFiles = %v, want the existing [NOTES.md], not re-detected ones", cfg.EagerFiles)
+			}
+		})
+	}
+}
+
+// Re-running the very command that created the config — the one in the README —
+// must be harmless, not an error.
+func TestEnsureAcceptsTheProfilesAlreadySelected(t *testing.T) {
+	dir := t.TempDir()
+	body := "bootstrap: [python, cli]\neager_files: []\n"
+	write(t, filepath.Join(dir, FileName), body)
+
+	// Duplicates and stray whitespace normalise to the same selection.
+	if _, created, err := Ensure(dir, []string{"python", " cli", "python"}, nil); err != nil || created {
+		t.Fatalf("Ensure = (created %v, err %v), want an untouched no-op", created, err)
+	}
+	unchanged(t, filepath.Join(dir, FileName), body)
+}
+
+// Different profiles against an existing config are refused, with nothing
+// written — and the existing config is returned so the caller can say what it
+// holds. Order counts: it decides the order of the composed payload.
+func TestEnsureRefusesToChangeTheProfiles(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		existing  string
+		requested []string
+	}{
+		{"different profile", "bootstrap: [go]\n", []string{"python"}},
+		{"different order", "bootstrap: [python, cli]\n", []string{"cli", "python"}},
+		{"existing is empty", "bootstrap: []\n", []string{"python"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, FileName)
+			write(t, path, tc.existing)
+
+			cfg, created, err := Ensure(dir, tc.requested, nil)
+			if !errors.Is(err, ErrProfileConflict) {
+				t.Fatalf("err = %v, want ErrProfileConflict", err)
+			}
+			if created {
+				t.Error("created = true on a conflict")
+			}
+			if cfg.Path != path {
+				t.Errorf("conflict returned Path %q, want the existing %q", cfg.Path, path)
+			}
+			unchanged(t, path, tc.existing)
+		})
+	}
+}
+
+// A config contour cannot parse must not be "repaired" by overwriting it.
+func TestEnsureDoesNotOverwriteAMalformedConfig(t *testing.T) {
+	dir := t.TempDir()
+	body := "bootstrap: [unclosed\n"
+	write(t, filepath.Join(dir, FileName), body)
+
+	if _, _, err := Ensure(dir, []string{"python"}, nil); err == nil {
+		t.Error("Ensure succeeded over a malformed .contour.yaml")
+	}
+	unchanged(t, filepath.Join(dir, FileName), body)
 }
