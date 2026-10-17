@@ -6,6 +6,7 @@ external:
   gomore:
     commands:
       local-install: "go build -tags dev -o $GOPATH/bin/contour-dev main.go"
+      verify: "python3 agent.py"
   contour:
     bootstrap: [go]
     eager_files: []

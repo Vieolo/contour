@@ -15,10 +15,11 @@ var initCmd = &cobra.Command{
 		"convention, and a few sample files.\n\n" +
 		"Running this is optional: contour creates the store on first use when " +
 		"it is missing. The command exists for when you want to set the store " +
-		"up explicitly — notably at a path you have pointed the environment " +
-		"variable at.\n\n" +
-		"init is safe to re-run: it creates whatever is missing and never " +
-		"overwrites files you already have.",
+		"up explicitly — notably at a store_path you have set in the config " +
+		"file, which contour will not create on its own.\n\n" +
+		"init only ever creates a store. If one already exists — any directory " +
+		"with content in it — it is left exactly as it is: no sample you deleted " +
+		"comes back, and nothing is overwritten.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Resolve rather than resolveStore: init is the command that creates
 		// the store, so a missing directory is the normal case here — including
@@ -27,9 +28,9 @@ var initCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fresh := !home.Exists
 
-		if err := scaffold.Create(home.Path); err != nil {
+		created, err := scaffold.Create(home.Path)
+		if err != nil {
 			return err
 		}
 		configFile, _, err := config.EnsureFile()
@@ -37,16 +38,18 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
-		if fresh {
+		if created {
 			termange.PrintSuccessf("Created contour store at %s\n", home.Path)
 		} else {
-			termange.PrintSuccessf("Store ready at %s (existing files left untouched)\n", home.Path)
+			termange.PrintSuccessf("A store already exists at %s — left as it is.\n", home.Path)
 		}
 		termange.PrintInfof("Config file: %s\n", configFile)
 		if !home.Explicit {
 			termange.PrintInfof("Relocate it any time with `%s set-home <path>`.\n", config.Program)
 		}
-		termange.PrintInfof("Next: run `%s list` to see what's inside, or edit the samples under rules/.\n", config.Program)
+		if created {
+			termange.PrintInfof("Next: run `%s list` to see what's inside, or edit the samples under rules/.\n", config.Program)
+		}
 		return nil
 	},
 }

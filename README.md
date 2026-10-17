@@ -467,7 +467,7 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 | `contour get <id>` | Print one item's content. Body only, so it pipes cleanly. |
 | `contour search <query> [kind]` | Search IDs, descriptions, tags and content, case-insensitively. |
 | `contour bootstrap [name...]` | Print the session payload for one or more profiles, composed in the order given. Without a name, list the available profiles. |
-| `contour init` | Create the store explicitly. Optional, contour creates it on first use. Safe to re-run; never overwrites existing files. |
+| `contour init` | Create the store explicitly. Optional, contour creates it on first use. Only ever creates: on an existing store it changes nothing, so samples you deleted stay deleted. |
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
