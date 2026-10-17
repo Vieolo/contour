@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/bootstrap"
@@ -11,12 +13,14 @@ import (
 	"github.com/vieolo/contour/internal/mcpconfig"
 	"github.com/vieolo/contour/internal/project"
 	"github.com/vieolo/termange"
+	"github.com/vieolo/termange/tui"
 )
 
 var (
-	mcpInitProfiles []string
-	mcpInitFile     string
-	mcpInitName     string
+	mcpInitProfiles    []string
+	mcpInitInteractive bool
+	mcpInitFile        string
+	mcpInitName        string
 )
 
 // commonAgentFiles are the single-file conventions mcp-init offers to load
@@ -26,20 +30,25 @@ var commonAgentFiles = []string{"AGENTS.md", "AGENT.md", "CLAUDE.md"}
 var mcpInitCmd = &cobra.Command{
 	Use:   "mcp-init",
 	Short: "Register contour as an MCP server in this project",
-	Long: "Set this project up for contour: write the MCP config so an agent " +
-		"starts contour, and a project config that pins the profiles and lists any " +
-		"files to load eagerly.\n\n" +
-		"The project config goes in the project's go.yaml, under external.contour, " +
-		"if it has one — a Go project need not carry a second config file. " +
-		"Otherwise it is written to .contour.yaml at the project root.\n\n" +
-		"The MCP entry (in " + mcpconfig.DefaultFile + ") records contour's " +
-		"absolute path — an agent launches its servers without a login shell, so a " +
-		"bare `contour` would not resolve — and a bare `mcp` command, because the " +
-		"profiles now live in the project config rather than the launch arguments.\n\n" +
-		"Pass --bootstrap to set a profile, repeating it to combine entry points " +
-		"(--bootstrap python --bootstrap cli). Any AGENTS.md or CLAUDE.md at the " +
-		"project root is detected and listed for eager loading; edit the config to " +
-		"change that.",
+	Long: "Register contour as an MCP server for this project on this machine, " +
+		"and give the project a contour config if it has none.\n\n" +
+		"The MCP entry (in " + mcpconfig.DefaultFile + ") is always written. It " +
+		"records contour's absolute path — an agent launches its servers without " +
+		"a login shell, so a bare `contour` would not resolve — which makes it " +
+		"specific to this machine: keep " + mcpconfig.DefaultFile + " out of git, " +
+		"and have each developer run this once.\n\n" +
+		"The project config pins the profiles and lists any files to load " +
+		"eagerly. It goes in the project's go.yaml, under external.contour, if it " +
+		"has one — a Go project need not carry a second config file — and " +
+		"otherwise in .contour.yaml at the project root. It is written only when " +
+		"the project has none: an existing config is the team's committed setup, " +
+		"and is never modified here. To change it, edit the file.\n\n" +
+		"Pass --bootstrap to choose the profiles for a new config, repeating it to " +
+		"combine entry points (--bootstrap python --bootstrap cli), or -i to pick " +
+		"them from a list of the profiles in your store, with their descriptions. " +
+		"Any AGENTS.md or CLAUDE.md at the project root is detected and listed for " +
+		"eager loading. Against an existing config, --bootstrap is accepted only " +
+		"if it names the profiles the config already selects, and -i is refused.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// The path contour was launched from. Deliberately not resolved through
@@ -49,25 +58,45 @@ var mcpInitCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("determine contour's own path: %w", err)
 		}
-		if err := checkProfilesExist(mcpInitProfiles); err != nil {
-			return err
-		}
-
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("determine the working directory: %w", err)
 		}
-		eager := detectEagerFiles(cwd)
 
-		// 1. The project config carries the profile and eager files, so the
-		//    settings live with the project and .mcp.json stays a bare launch.
-		cfgPath, err := project.Write(cwd, mcpInitProfiles, eager)
-		if err != nil {
+		if mcpInitInteractive {
+			picked, err := pickProfiles(cwd)
+			if errors.Is(err, tui.ErrCanceled) {
+				return nil // the picker has already said nothing was written
+			}
+			if err != nil {
+				return err
+			}
+			mcpInitProfiles = picked
+		}
+		if err := checkProfilesExist(mcpInitProfiles); err != nil {
 			return err
 		}
 
-		// 2. Register the server with a bare `mcp`; the profile comes from the
-		//    config written above.
+		// 1. Give the project a config if it has none. An existing one is the
+		//    team's committed setup and is left alone — every developer runs
+		//    this command to register contour on their own machine, so it must
+		//    not be able to rewrite shared settings. Settled before .mcp.json is
+		//    touched, so a conflict leaves nothing half-done.
+		cfg, created, err := project.Ensure(cwd, mcpInitProfiles, detectEagerFiles(cwd))
+		if errors.Is(err, project.ErrProfileConflict) {
+			return fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+				"edit that file to switch profiles, or run without --bootstrap to just register contour on this machine",
+				cfg.Path, strings.Join(cfg.Bootstrap, ", "))
+		}
+		if err != nil {
+			return err
+		}
+		for _, w := range cfg.Warnings {
+			fmt.Fprintf(os.Stderr, "contour: %s\n", w)
+		}
+
+		// 2. Register the server with a bare `mcp`; the profiles come from the
+		//    project config, not the launch arguments.
 		replaced, err := mcpconfig.Upsert(mcpInitFile, mcpInitName, mcpconfig.Entry{
 			Command: exe,
 			Args:    []string{"mcp"},
@@ -82,15 +111,28 @@ var mcpInitCmd = &cobra.Command{
 			termange.PrintSuccessf("Added the %q server to %s\n", mcpInitName, mcpInitFile)
 		}
 		termange.PrintInfof("  command: %s\n", exe)
-		termange.PrintInfof("  config:  %s\n", cfgPath)
-		for _, p := range mcpInitProfiles {
+		if created {
+			termange.PrintInfof("  config:  %s (created)\n", cfg.Path)
+		} else {
+			termange.PrintInfof("  config:  %s (existing, left unchanged)\n", cfg.Path)
+		}
+		for _, p := range cfg.Bootstrap {
 			termange.PrintInfof("  profile: %s\n", p)
 		}
-		for _, f := range eager {
-			termange.PrintInfof("  eager:   %s (detected)\n", f)
+		for _, f := range cfg.EagerFiles {
+			termange.PrintInfof("  eager:   %s\n", f.ID)
 		}
-		if len(mcpInitProfiles) == 0 {
-			termange.PrintWarningf("\nNo profile set — add `bootstrap: [<name>]` to %s (%s bootstrap lists them).\n", cfgPath, config.Program)
+
+		if len(cfg.Bootstrap) == 0 {
+			termange.PrintWarningf("\nNo profile set — add `bootstrap: [<name>]` to %s (%s bootstrap lists them).\n", cfg.Path, config.Program)
+		} else if !created {
+			// The config came from the team, but the store is this machine's. A
+			// profile missing here makes the MCP server fail to start, so say so
+			// now, at setup, rather than when an agent first connects.
+			if err := checkProfilesExist(cfg.Bootstrap); err != nil {
+				termange.PrintWarningf("\nThis project's profiles are not all in your store: %v\n"+
+					"The MCP server will not start until they are.\n", err)
+			}
 		}
 		return nil
 	},
@@ -98,7 +140,10 @@ var mcpInitCmd = &cobra.Command{
 
 func init() {
 	mcpInitCmd.Flags().StringSliceVar(&mcpInitProfiles, "bootstrap", nil,
-		"bootstrap profile to record in the project config (repeatable)")
+		"bootstrap profile for a new project config (repeatable)")
+	mcpInitCmd.Flags().BoolVarP(&mcpInitInteractive, "interactive", "i", false,
+		"pick the profiles for a new project config from a list (needs a terminal)")
+	mcpInitCmd.MarkFlagsMutuallyExclusive("interactive", "bootstrap")
 	mcpInitCmd.Flags().StringVar(&mcpInitFile, "file", mcpconfig.DefaultFile,
 		"MCP config file to create or update")
 	mcpInitCmd.Flags().StringVar(&mcpInitName, "name", config.Program,
@@ -117,6 +162,104 @@ func detectEagerFiles(projectDir string) []string {
 		}
 	}
 	return found
+}
+
+// pickProfiles lets the user choose a new project's profiles from the ones in
+// their store, for when they remember what they want but not what it is called.
+//
+// Everything that would make the choice pointless is settled before the picker
+// opens. An existing project config is refused outright, since mcp-init never
+// changes one — better to say so up front than after the user has chosen. A
+// missing terminal is refused too: the picker would otherwise block forever on
+// input that never comes, which is how it behaves for an agent or a script.
+func pickProfiles(projectDir string) ([]string, error) {
+	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+		return nil, fmt.Errorf("--interactive needs a terminal; pass --bootstrap <name> instead (`%s bootstrap` lists the profiles)", config.Program)
+	}
+
+	existing, err := project.Load(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	if existing.Path != "" {
+		return nil, fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+			"run without --interactive to just register contour on this machine, or edit that file to switch profiles",
+			existing.Path, strings.Join(existing.Bootstrap, ", "))
+	}
+
+	home, err := resolveStore()
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := bootstrap.LoadProfiles(home.Path)
+	if err != nil {
+		return nil, err
+	}
+	if len(profiles) == 0 {
+		return nil, fmt.Errorf("there are no bootstrap profiles in %s to choose from — add one first", bootstrap.Dir(home.Path))
+	}
+
+	items, nameOf := profileChoices(profiles)
+	names := func(labels []string) []string {
+		out := make([]string, 0, len(labels))
+		for _, l := range labels {
+			out = append(out, nameOf[l])
+		}
+		return out
+	}
+
+	labels, err := tui.MultiSelect(tui.MultiSelectOptions{
+		Title: "Bootstrap profiles for this project",
+		Items: items,
+		SelectMessage: func(labels []string) string {
+			if len(labels) == 0 {
+				return "Nothing selected."
+			}
+			return "Selected: " + strings.Join(names(labels), ", ")
+		},
+		QuitMessage:     "Canceled — nothing was written.",
+		EnableFiltering: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Confirming with nothing selected is almost always a slip — pressing enter
+	// on the highlighted profile expecting that to pick it, when it is space
+	// that toggles. Writing an empty config would be costly to undo: mcp-init
+	// will never change it afterwards, so the fix would be a hand edit.
+	if len(labels) == 0 {
+		return nil, errors.New("no profile selected (space selects, enter confirms) — nothing was written")
+	}
+	return names(labels), nil
+}
+
+// profileChoices turns profiles into picker items, returning the label each
+// one is shown with and the mapping back to its name.
+//
+// The description goes into the label because the picker exists for people
+// who have forgotten the names: what a profile is for is what they will
+// recognise. It also makes the filter match descriptions as well as names.
+// Profiles arrive sorted by name, and the picker returns its selection in the
+// same order — which is therefore the order they compose in.
+func profileChoices(profiles []bootstrap.Profile) ([]tui.SelectItem, map[string]string) {
+	items := make([]tui.SelectItem, 0, len(profiles))
+	nameOf := make(map[string]string, len(profiles))
+	for _, p := range profiles {
+		label := p.Name
+		if p.Description != "" {
+			label = p.Name + " — " + p.Description
+		}
+		items = append(items, tui.SelectItem(label))
+		nameOf[label] = p.Name
+	}
+	return items, nameOf
+}
+
+// isTerminal reports whether f is attached to a terminal.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // checkProfilesExist rejects an unknown profile now rather than leaving the

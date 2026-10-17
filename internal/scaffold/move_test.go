@@ -82,10 +82,85 @@ func TestCreateNeverOverwrites(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "README.md", "my own words")
 
-	if err := Create(root); err != nil {
+	created, err := Create(root)
+	if err != nil {
 		t.Fatalf("Create: %v", err)
+	}
+	if created {
+		t.Error("Create reported creating a store over existing content")
 	}
 	if got := read(t, root, "README.md"); got != "my own words" {
 		t.Errorf("README = %q, want the user's own content untouched", got)
+	}
+}
+
+// A new store gets the full layout and every sample, whether the directory is
+// missing outright or exists but is empty — `mkdir` first, `init` second is a
+// perfectly reasonable way to set one up.
+func TestCreateSeedsAMissingOrEmptyDirectory(t *testing.T) {
+	for name, root := range map[string]string{
+		"missing": filepath.Join(t.TempDir(), "store"),
+		"empty":   t.TempDir(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			created, err := Create(root)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if !created {
+				t.Fatal("Create reported no store created")
+			}
+			for _, f := range seedFiles() {
+				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(f.rel))); err != nil {
+					t.Errorf("sample %s missing: %v", f.rel, err)
+				}
+			}
+		})
+	}
+}
+
+// The complaint this guards against: re-running init on a store the user has
+// already shaped must not put back what they removed. Samples are scaffolding for
+// day one; once deleted, they stay deleted — and so does a kind directory the
+// user has no use for.
+func TestCreateLeavesAnExistingStoreAlone(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Create(root); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The user prunes the samples they don't want and drops a kind they don't use.
+	deleted := "rules/python/010-errors.md"
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(deleted))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "knowledge")); err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := Create(root)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created {
+		t.Error("Create reported creating a store where one already exists")
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(deleted))); err == nil {
+		t.Errorf("a deleted sample (%s) was put back", deleted)
+	}
+	if _, err := os.Stat(filepath.Join(root, "knowledge")); err == nil {
+		t.Error("a deleted kind directory (knowledge/) was put back")
+	}
+}
+
+// A file where the store should be can be neither a store nor a place to make
+// one, so it must fail loudly rather than be silently treated as "has content".
+func TestCreateRejectsAFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store")
+	if err := os.WriteFile(path, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(path); err == nil {
+		t.Error("Create accepted a regular file as the store path")
 	}
 }

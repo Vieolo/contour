@@ -22,6 +22,60 @@ func seedFiles() []seedFile {
 	}
 }
 
+// localReadmeSeed documents a project's local store. It sits at the overlay's
+// root, outside the kind directories, so the loader never serves it — which is
+// why the format examples live here rather than as sample files, where they
+// would be live context in every session.
+const localReadmeSeed = `# Project-local context
+
+This folder holds contour context that belongs to this project alone. contour
+merges it over your central store whenever it runs in this project.
+
+Everything here is live — there is no opt-in:
+
+    rules/       Loaded EAGERLY into every session in this project.
+    skills/      Listed on the menu, fetched when relevant.
+    knowledge/   Listed on the menu, fetched when relevant.
+
+No tags or profiles are needed: being in this project is scope enough. Where a
+local item conflicts with one from your central store, the local one wins, and
+contour tells the agent so.
+
+## Formats
+
+A rule or knowledge item is a markdown file, optionally starting with
+frontmatter:
+
+    ---
+    description: How this service logs
+    ---
+
+    - Use the project logger; never print().
+
+A skill is a folder containing a SKILL.md, for example skills/deploy/SKILL.md.
+Anything else in a skill's folder (scripts, templates) is left alone.
+
+An agent sees only the description of a skill or knowledge item until it
+decides to fetch it, so write the description well. Prefix filenames with a
+three-digit number (010-, 020-) when order matters.
+
+## Keep rules short
+
+Rules are paid for in every session, and an agent's client keeps only a
+limited amount of contour's startup instructions. Past that, contour sends an
+excerpt and tells the agent to fetch the rest. Put anything long or
+situational in a skill or in knowledge instead.
+
+## Moving items to your central store
+
+When something here turns out to apply to other projects too, move it into
+your central store and select it from a profile. While both copies exist the
+local one is authoritative, so nothing changes until you delete it here.
+
+This README is documentation only: contour reads nothing outside rules/,
+skills/ and knowledge/. The .gitkeep files keep the empty folders in git.
+`
+
 const readmeSeed = `# contour store
 
 This directory is your contour store: the single source of truth for the

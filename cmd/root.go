@@ -72,7 +72,7 @@ func resolveStore() (config.Home, error) {
 			home.Path, config.Program)
 	}
 
-	if err := scaffold.Create(home.Path); err != nil {
+	if _, err := scaffold.Create(home.Path); err != nil {
 		return config.Home{}, err
 	}
 	render.StoreCreated(home.Path, configFile)

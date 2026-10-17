@@ -32,3 +32,8 @@ go.work.sum
 # .idea/
 # .vscode/
 .DS_Store
+
+# MCP client config. It records the absolute path of the contour binary, which
+# differs from machine to machine; each developer generates their own with
+# `contour mcp-init`. The project's contour settings live in go.yaml instead.
+.mcp.json

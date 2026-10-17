@@ -1,5 +1,12 @@
 # Change Log
 
+## v0.2.5 (2026-10-17)
+- `contour init` no longer regenerates sample files in an existing store
+- `congour init` now accepts a `--local` flag. Passing this flag will generate a scaffold in `.agents` folder with `rules`, `skills`, and `knowledge` for a specific project. It will not override your existing files in `.agents` folder
+- The bug is fixed where running `contour mcp-init` while having an existing config used to wipe the existing values
+- `contour mcp-init` now has an interactive flag (`-i` or `--interactive`) which shows a multi-select TUI, allowing you to select one or more of the bootstrap profile
+- The README no longer advises committing `.mcp.json` as itt records the absolute path of the contour binary, which differs between machines
+
 ## v0.2.4 (2026-07-30)
 - A Go project that keeps a `go.yaml` can hold contour's per-project settings in its `external.contour` section instead of a separate `.contour.yaml`. The fields are unchanged. `contour mcp-init` detects an existing `go.yaml` and writes there, preserving the rest of the file. `.contour.yaml` takes precedence over any such host manifest
 
