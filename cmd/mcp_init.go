@@ -13,12 +13,14 @@ import (
 	"github.com/vieolo/contour/internal/mcpconfig"
 	"github.com/vieolo/contour/internal/project"
 	"github.com/vieolo/termange"
+	"github.com/vieolo/termange/tui"
 )
 
 var (
-	mcpInitProfiles []string
-	mcpInitFile     string
-	mcpInitName     string
+	mcpInitProfiles    []string
+	mcpInitInteractive bool
+	mcpInitFile        string
+	mcpInitName        string
 )
 
 // commonAgentFiles are the single-file conventions mcp-init offers to load
@@ -42,10 +44,11 @@ var mcpInitCmd = &cobra.Command{
 		"the project has none: an existing config is the team's committed setup, " +
 		"and is never modified here. To change it, edit the file.\n\n" +
 		"Pass --bootstrap to choose the profiles for a new config, repeating it to " +
-		"combine entry points (--bootstrap python --bootstrap cli). Any AGENTS.md " +
-		"or CLAUDE.md at the project root is detected and listed for eager " +
-		"loading. Against an existing config, --bootstrap is accepted only if it " +
-		"names the profiles the config already selects.",
+		"combine entry points (--bootstrap python --bootstrap cli), or -i to pick " +
+		"them from a list of the profiles in your store, with their descriptions. " +
+		"Any AGENTS.md or CLAUDE.md at the project root is detected and listed for " +
+		"eager loading. Against an existing config, --bootstrap is accepted only " +
+		"if it names the profiles the config already selects, and -i is refused.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// The path contour was launched from. Deliberately not resolved through
@@ -55,14 +58,25 @@ var mcpInitCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("determine contour's own path: %w", err)
 		}
-		if err := checkProfilesExist(mcpInitProfiles); err != nil {
-			return err
-		}
-
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("determine the working directory: %w", err)
 		}
+
+		if mcpInitInteractive {
+			picked, err := pickProfiles(cwd)
+			if errors.Is(err, tui.ErrCanceled) {
+				return nil // the picker has already said nothing was written
+			}
+			if err != nil {
+				return err
+			}
+			mcpInitProfiles = picked
+		}
+		if err := checkProfilesExist(mcpInitProfiles); err != nil {
+			return err
+		}
+
 		// 1. Give the project a config if it has none. An existing one is the
 		//    team's committed setup and is left alone — every developer runs
 		//    this command to register contour on their own machine, so it must
@@ -127,6 +141,9 @@ var mcpInitCmd = &cobra.Command{
 func init() {
 	mcpInitCmd.Flags().StringSliceVar(&mcpInitProfiles, "bootstrap", nil,
 		"bootstrap profile for a new project config (repeatable)")
+	mcpInitCmd.Flags().BoolVarP(&mcpInitInteractive, "interactive", "i", false,
+		"pick the profiles for a new project config from a list (needs a terminal)")
+	mcpInitCmd.MarkFlagsMutuallyExclusive("interactive", "bootstrap")
 	mcpInitCmd.Flags().StringVar(&mcpInitFile, "file", mcpconfig.DefaultFile,
 		"MCP config file to create or update")
 	mcpInitCmd.Flags().StringVar(&mcpInitName, "name", config.Program,
@@ -145,6 +162,104 @@ func detectEagerFiles(projectDir string) []string {
 		}
 	}
 	return found
+}
+
+// pickProfiles lets the user choose a new project's profiles from the ones in
+// their store, for when they remember what they want but not what it is called.
+//
+// Everything that would make the choice pointless is settled before the picker
+// opens. An existing project config is refused outright, since mcp-init never
+// changes one — better to say so up front than after the user has chosen. A
+// missing terminal is refused too: the picker would otherwise block forever on
+// input that never comes, which is how it behaves for an agent or a script.
+func pickProfiles(projectDir string) ([]string, error) {
+	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+		return nil, fmt.Errorf("--interactive needs a terminal; pass --bootstrap <name> instead (`%s bootstrap` lists the profiles)", config.Program)
+	}
+
+	existing, err := project.Load(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	if existing.Path != "" {
+		return nil, fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+			"run without --interactive to just register contour on this machine, or edit that file to switch profiles",
+			existing.Path, strings.Join(existing.Bootstrap, ", "))
+	}
+
+	home, err := resolveStore()
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := bootstrap.LoadProfiles(home.Path)
+	if err != nil {
+		return nil, err
+	}
+	if len(profiles) == 0 {
+		return nil, fmt.Errorf("there are no bootstrap profiles in %s to choose from — add one first", bootstrap.Dir(home.Path))
+	}
+
+	items, nameOf := profileChoices(profiles)
+	names := func(labels []string) []string {
+		out := make([]string, 0, len(labels))
+		for _, l := range labels {
+			out = append(out, nameOf[l])
+		}
+		return out
+	}
+
+	labels, err := tui.MultiSelect(tui.MultiSelectOptions{
+		Title: "Bootstrap profiles for this project",
+		Items: items,
+		SelectMessage: func(labels []string) string {
+			if len(labels) == 0 {
+				return "Nothing selected."
+			}
+			return "Selected: " + strings.Join(names(labels), ", ")
+		},
+		QuitMessage:     "Canceled — nothing was written.",
+		EnableFiltering: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Confirming with nothing selected is almost always a slip — pressing enter
+	// on the highlighted profile expecting that to pick it, when it is space
+	// that toggles. Writing an empty config would be costly to undo: mcp-init
+	// will never change it afterwards, so the fix would be a hand edit.
+	if len(labels) == 0 {
+		return nil, errors.New("no profile selected (space selects, enter confirms) — nothing was written")
+	}
+	return names(labels), nil
+}
+
+// profileChoices turns profiles into picker items, returning the label each
+// one is shown with and the mapping back to its name.
+//
+// The description goes into the label because the picker exists for people
+// who have forgotten the names: what a profile is for is what they will
+// recognise. It also makes the filter match descriptions as well as names.
+// Profiles arrive sorted by name, and the picker returns its selection in the
+// same order — which is therefore the order they compose in.
+func profileChoices(profiles []bootstrap.Profile) ([]tui.SelectItem, map[string]string) {
+	items := make([]tui.SelectItem, 0, len(profiles))
+	nameOf := make(map[string]string, len(profiles))
+	for _, p := range profiles {
+		label := p.Name
+		if p.Description != "" {
+			label = p.Name + " — " + p.Description
+		}
+		items = append(items, tui.SelectItem(label))
+		nameOf[label] = p.Name
+	}
+	return items, nameOf
+}
+
+// isTerminal reports whether f is attached to a terminal.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // checkProfilesExist rejects an unknown profile now rather than leaving the
