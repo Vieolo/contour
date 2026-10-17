@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/vieolo/contour/internal/store"
@@ -238,8 +239,55 @@ func readGoYAML(path string) (f file, found bool, err error) {
 	return f, found, nil
 }
 
+// ErrProfileConflict reports that a project already has a config and it selects
+// different profiles from the ones asked for. Ensure returns it alongside the
+// existing config, having written nothing.
+var ErrProfileConflict = errors.New("the project config already exists and selects different profiles")
+
+// Ensure gives a project a config if it has none, returning the config in
+// effect and whether this call created it.
+//
+// An existing config is never modified. It is the team's committed setup, while
+// the command that calls this — registering contour on a machine — is run once
+// per developer, on every machine. Rewriting the config there would let anyone's
+// routine setup silently replace the team's profiles and eager files. A
+// deliberate change to shared settings should be a deliberate edit to the file,
+// where it shows up in review.
+//
+// Asking for exactly the profiles the existing config already selects is not a
+// conflict, so re-running the same setup command is harmless. Asking for
+// different ones returns ErrProfileConflict and writes nothing: quietly ignoring
+// an explicit request would be as wrong as quietly honouring it.
+//
+// eagerFiles are only used when creating; an existing config's list stands.
+func Ensure(projectDir string, bootstrap, eagerFiles []string) (Config, bool, error) {
+	cfg, err := Load(projectDir)
+	if err != nil {
+		return Config{}, false, err
+	}
+
+	if cfg.Path != "" {
+		if requested := cleanNames(bootstrap); len(requested) > 0 && !slices.Equal(requested, cfg.Bootstrap) {
+			return cfg, false, ErrProfileConflict
+		}
+		return cfg, false, nil
+	}
+
+	if _, err := Write(projectDir, bootstrap, eagerFiles); err != nil {
+		return Config{}, false, err
+	}
+	// Read back what was written rather than reporting the inputs, so the
+	// caller sees the config exactly as every later command will load it.
+	cfg, err = Load(projectDir)
+	if err != nil {
+		return Config{}, false, err
+	}
+	return cfg, true, nil
+}
+
 // Write records the bootstrap profiles and eager files for a project, returning
-// the path written.
+// the path written. It replaces whatever config the project had; Ensure is the
+// way to set up a project without that risk.
 //
 // A project that already keeps a host manifest gets contour's settings in that
 // file rather than a second config file. One that does not gets a .contour.yaml.

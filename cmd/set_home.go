@@ -53,7 +53,7 @@ var setHomeCmd = &cobra.Command{
 			return confirmAlreadyThere(current, target)
 		}
 
-		occupied, err := dirHasContent(target)
+		occupied, err := scaffold.HasContent(target)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ var setHomeCmd = &cobra.Command{
 			summary = fmt.Sprintf("Moved your store from %s to %s", current.Path, target)
 
 		default:
-			if err := scaffold.Create(target); err != nil {
+			if _, err := scaffold.Create(target); err != nil {
 				return err
 			}
 			summary = fmt.Sprintf("Created a new store at %s", target)
@@ -109,7 +109,7 @@ func init() {
 // pins the default location explicitly.
 func confirmAlreadyThere(current config.Home, target string) error {
 	if !current.Exists {
-		if err := scaffold.Create(target); err != nil {
+		if _, err := scaffold.Create(target); err != nil {
 			return err
 		}
 	}
@@ -155,26 +155,6 @@ func refuseMoveIntoItself(store, target string) error {
 		return fmt.Errorf("cannot move the store inside itself: %s is within %s", target, store)
 	}
 	return nil
-}
-
-// dirHasContent reports whether path exists and holds anything at all.
-func dirHasContent(path string) (bool, error) {
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("stat %s: %w", path, err)
-	}
-	if !info.IsDir() {
-		return false, fmt.Errorf("%s already exists and is not a directory", path)
-	}
-
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return false, fmt.Errorf("read %s: %w", path, err)
-	}
-	return len(entries) > 0, nil
 }
 
 // removeEmptyDir clears an empty destination so a rename can take its place.
