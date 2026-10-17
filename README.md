@@ -483,7 +483,7 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 | `contour home` | Show where the store lives, how that was decided, and which config file records it. |
 | `contour set-home <path\|here>` | Move the store to another directory, content and all, recording it in the config file. `here` uses a folder in the working directory. Creates a new store if you have none. |
 | `contour mcp` | Run the MCP server over stdio. |
-| `contour mcp-init` | Register contour in `.mcp.json` on this machine (absolute path, bare `mcp`), and give the project a config if it has none — profiles from `--bootstrap`, plus a detected root `AGENTS.md`/`CLAUDE.md`. Never modifies an existing project config. |
+| `contour mcp-init` | Register contour in `.mcp.json` on this machine (absolute path, bare `mcp`), and give the project a config if it has none — profiles from `--bootstrap` or picked from a list with `-i`, plus a detected root `AGENTS.md`/`CLAUDE.md`. Never modifies an existing project config. |
 | `contour stats` | Show how agents have used the store: gaps (searched, found nothing), never-fetched items, and most-fetched. Local only; `--project`, `--days`, `--clear`. |
 | `contour version` | Print the version. |
 
@@ -583,6 +583,20 @@ Repeat the flag to combine entry points:
 ```bash
 contour mcp-init --bootstrap python --bootstrap cli
 ```
+
+Or, if you remember what you want but not what the profile is called, pick
+from a list:
+
+```bash
+contour mcp-init -i
+```
+
+It lists every profile in your store with its description — space selects,
+enter confirms, `/` filters by name or description. The chosen profiles compose
+in the order listed (alphabetical), so if order matters, adjust `bootstrap:`
+in the config afterwards. `-i` needs a terminal, and like `--bootstrap` it only
+applies to a project that has no config yet: on one that does, it says so
+before showing the list.
 
 The `.mcp.json` entry is a bare launch line — the profiles live in the project
 config, not the arguments:
