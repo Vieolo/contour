@@ -79,8 +79,9 @@ var mcpCmd = &cobra.Command{
 		}
 		// The agent is told about missing profiles in its instructions; this is
 		// for whoever reads the server's log.
-		if _, missing, err := bootstrap.LoadAvailable(home.Path, profiles); err == nil && len(missing) > 0 {
-			fmt.Fprintf(os.Stderr, "contour: profile(s) not in your store, serving without them: %s\n", strings.Join(missing, ", "))
+		if _, missing, err := bootstrap.LoadAvailable(profileSources(home.Path, overlays), profiles); err == nil && len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "contour: profile(s) in neither the project nor your store, serving without them: %s\n",
+				strings.Join(missing, ", "))
 		}
 
 		// Open the session's usage log, if enabled. It is best-effort: a failure
@@ -100,13 +101,14 @@ var mcpCmd = &cobra.Command{
 			summaries = append(summaries, mcpserver.PresetSummary{Name: p.Name, Description: p.Description})
 		}
 		instructions, err := mcpserver.BuildInstructions(mcpserver.Options{
-			Root:       home.Path,
-			Overlays:   overlays,
-			EagerFiles: preset.EagerFiles,
-			Profiles:   profiles,
-			Notices:    notices,
-			Preset:     preset.Name,
-			Presets:    summaries,
+			Root:          home.Path,
+			Overlays:      overlays,
+			EagerFiles:    preset.EagerFiles,
+			Profiles:      profiles,
+			SelectedLocal: preset.Local == project.LocalSelected,
+			Notices:       notices,
+			Preset:        preset.Name,
+			Presets:       summaries,
 		})
 		if err != nil {
 			return err

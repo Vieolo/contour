@@ -126,3 +126,22 @@ func TestCreateLocalSharesAnAgentsFolderWithOtherTools(t *testing.T) {
 		}
 	}
 }
+
+// The scaffold includes a bootstrap/ folder for the project's own profiles, and
+// an overlay holding only that already counts as a local store.
+func TestCreateLocalScaffoldsProjectProfiles(t *testing.T) {
+	project := t.TempDir()
+	overlay, _, err := CreateLocal(project)
+	if err != nil {
+		t.Fatalf("CreateLocal: %v", err)
+	}
+	if !exists(t, filepath.Join(overlay, store.BootstrapDir, gitKeep)) {
+		t.Error("bootstrap/ was not scaffolded")
+	}
+
+	other := t.TempDir()
+	write(t, other, ".contour/bootstrap/frontend.md", "---\nrules: [frontend]\n---\n")
+	if got, created, err := CreateLocal(other); err != nil || created || got != filepath.Join(other, ".contour") {
+		t.Errorf("CreateLocal = %q, created %v, %v; want the existing .contour left alone", got, created, err)
+	}
+}

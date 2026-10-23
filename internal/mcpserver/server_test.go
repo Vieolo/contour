@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vieolo/contour/internal/store"
 )
 
 func writeFile(t *testing.T, root, rel, content string) {
@@ -88,10 +90,10 @@ func TestMissingProfilesNotice(t *testing.T) {
 	if got := MissingProfilesNotice(nil); got != "" {
 		t.Errorf("notice for nothing missing = %q, want empty", got)
 	}
-	if got := MissingProfilesNotice([]string{"go"}); !strings.Contains(got, "profile go, which is not") {
+	if got := MissingProfilesNotice([]string{"go"}); !strings.Contains(got, "profile go, which is in neither") {
 		t.Errorf("singular notice reads badly: %q", got)
 	}
-	if got := MissingProfilesNotice([]string{"go", "cli"}); !strings.Contains(got, "profiles go, cli, which are not") {
+	if got := MissingProfilesNotice([]string{"go", "cli"}); !strings.Contains(got, "profiles go, cli, which are in neither") {
 		t.Errorf("plural notice reads badly: %q", got)
 	}
 }
@@ -182,5 +184,49 @@ func TestBuildInstructionsReportsTheRulesItDelivered(t *testing.T) {
 		if !strings.Contains(ex.Text, "## "+id) {
 			t.Errorf("RuleIDs claims %q, which the excerpt does not show", id)
 		}
+	}
+}
+
+// With local: selected and no profile, nothing of the project's is preloaded —
+// not as a rule, not as a menu line — except the files the config names, which
+// are always delivered. The rest stays reachable through list, search and get.
+func TestBuildInstructionsLocalSelectedWithoutProfiles(t *testing.T) {
+	root, overlay := storeWithLocalRule(t)
+	notes := filepath.Join(t.TempDir(), "AGENTS.md")
+	writeFile(t, filepath.Dir(notes), "AGENTS.md", "Repo notes.")
+
+	got, err := BuildInstructions(Options{
+		Root:          root,
+		Overlays:      []string{overlay},
+		EagerFiles:    []store.EagerFile{{ID: "AGENTS.md", Path: notes}},
+		SelectedLocal: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildInstructions: %v", err)
+	}
+	if strings.Contains(got.Text, "Use the project logger.") {
+		t.Errorf("an unselected project rule was delivered eagerly:\n%s", got.Text)
+	}
+	if strings.Contains(got.Text, "rules/010-local") {
+		t.Errorf("an unselected project rule is on the startup menu:\n%s", got.Text)
+	}
+	if !strings.Contains(got.Text, "- rules/python/010-errors") {
+		t.Errorf("the central rules left the menu too:\n%s", got.Text)
+	}
+	if !strings.Contains(got.Text, "Repo notes.") {
+		t.Errorf("a named eager file was not delivered:\n%s", got.Text)
+	}
+}
+
+// The eager rules and the menus that follow are separate sections; a heading
+// must never run on from the last line of a rule.
+func TestBuildInstructionsSeparatesRulesFromMenus(t *testing.T) {
+	root, overlay := storeWithLocalRule(t)
+	got, err := BuildInstructions(Options{Root: root, Overlays: []string{overlay}})
+	if err != nil {
+		t.Fatalf("BuildInstructions: %v", err)
+	}
+	if !strings.Contains(got.Text, "Use the project logger.\n\n# Available rules") {
+		t.Errorf("the menu heading runs into the last rule:\n%s", got.Text)
 	}
 }

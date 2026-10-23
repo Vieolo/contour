@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/mcpserver"
+	"github.com/vieolo/contour/internal/project"
 	"github.com/vieolo/contour/internal/render"
 	"github.com/vieolo/contour/internal/unic"
 )
@@ -85,11 +86,12 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 			return nil
 		}
 
-		profiles, err := bootstrap.LoadProfiles(home.Path)
+		overlays, cfg := projectContext()
+		profiles, err := bootstrap.LoadProfiles(profileSources(home.Path, overlays))
 		if err != nil {
 			return err
 		}
-		xref := bootstrap.CrossReference(profiles, st)
+		xref := bootstrap.CrossReference(profiles, st, includesAllLocal(cfg))
 		render.ProfilesHeader(xref.Names())
 
 		// Count only within the kinds shown, so `list skills --profiles` does not
@@ -144,4 +146,18 @@ var listCmd = unic.UniversalCommand[listInput, listResult]{
 
 func init() {
 	addCommand(&listCmd)
+}
+
+// includesAllLocal reports whether any session in the project gets all of its
+// local items — true with no presets, or with any preset using local: all.
+func includesAllLocal(cfg project.Config) bool {
+	if len(cfg.Presets) == 0 {
+		return true
+	}
+	for _, p := range cfg.Presets {
+		if p.Local == project.LocalAll {
+			return true
+		}
+	}
+	return false
 }

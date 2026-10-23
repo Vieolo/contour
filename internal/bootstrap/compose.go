@@ -17,18 +17,15 @@ const (
 )
 
 // Composed is a set of profiles resolved against a store: the rules to load
-// eagerly, and the skills and knowledge offered for on-demand fetching. Each
-// slice holds the central items the profiles selected followed by every
-// project-overlay item, which is always included regardless of tags.
+// eagerly, and the skills and knowledge offered for on-demand fetching.
 type Composed struct {
 	Profiles  []Profile
 	Rules     []store.Item
 	Skills    []store.Item
 	Knowledge []store.Item
 
-	// UnmatchedTags are tags a profile requested that matched no central item in
-	// any kind it requested them for — almost always a typo. Overlay items do not
-	// count, since they are included without tags.
+	// UnmatchedTags are tags a profile requested that matched no item, central
+	// or project, in any kind it requested them for — almost always a typo.
 	UnmatchedTags []UnmatchedTag
 }
 
@@ -40,8 +37,7 @@ type UnmatchedTag struct {
 	Tag     string
 }
 
-// Compose resolves the profiles' tag selections against the central store and
-// adds every project-overlay item unconditionally.
+// Compose resolves the profiles' tag selections against the store.
 //
 // Profiles compose by concatenating their tag selections in the order given, so
 // [python, cli] puts the Python rules ahead of the CLI ones, and an item both
@@ -49,12 +45,19 @@ type UnmatchedTag struct {
 // rule that already orders tags within one profile, lifted a level — which is
 // what lets a project assemble the entry point it needs (mostly Python, with an
 // accessory CLI) without the store carrying a profile for every combination.
-func Compose(profiles []Profile, st *store.Store) Composed {
+//
+// allLocal says what happens to the project's own items. With it, every one is
+// included whatever the tags say — being local is scope enough — exactly as
+// before presets could choose. Without it, project items are treated like
+// central ones: in only if a profile's tags select them. That is what lets a
+// large project keep its context in one local store and hand each preset just
+// its part. Files the project config names in eager_files are in either way.
+func Compose(profiles []Profile, st *store.Store, allLocal bool) Composed {
 	return Composed{
 		Profiles:      profiles,
-		Rules:         composeKind(st, store.KindRules, mergedTags(profiles, store.KindRules)),
-		Skills:        composeKind(st, store.KindSkills, mergedTags(profiles, store.KindSkills)),
-		Knowledge:     composeKind(st, store.KindKnowledge, mergedTags(profiles, store.KindKnowledge)),
+		Rules:         composeKind(st, store.KindRules, mergedTags(profiles, store.KindRules), allLocal),
+		Skills:        composeKind(st, store.KindSkills, mergedTags(profiles, store.KindSkills), allLocal),
+		Knowledge:     composeKind(st, store.KindKnowledge, mergedTags(profiles, store.KindKnowledge), allLocal),
 		UnmatchedTags: unmatchedTags(st, profiles),
 	}
 }
@@ -77,11 +80,27 @@ func mergedTags(profiles []Profile, kind store.Kind) []string {
 	return out
 }
 
-// composeKind selects the central items of a kind by tag, then appends every
-// local overlay item of that kind — project context applies unconditionally.
-func composeKind(st *store.Store, kind store.Kind, tags []string) []store.Item {
-	selected := selectByTags(st.BySource(kind, store.OriginStore), tags)
-	return append(selected, st.BySource(kind, store.OriginLocal)...)
+// composeKind selects a kind's items for a payload; see Compose.
+func composeKind(st *store.Store, kind store.Kind, tags []string, allLocal bool) []store.Item {
+	if allLocal {
+		// Central items by tag, then every project item in load order — the
+		// order every existing project's payload has always had.
+		selected := selectByTags(st.BySource(kind, store.OriginStore), tags)
+		return append(selected, st.BySource(kind, store.OriginLocal)...)
+	}
+
+	// Both stores by tag, then any named file the tags did not reach.
+	selected := selectByTags(st.ByKind(kind), tags)
+	in := make(map[string]bool, len(selected))
+	for _, it := range selected {
+		in[it.ID] = true
+	}
+	for _, it := range st.BySource(kind, store.OriginLocal) {
+		if it.Pinned && !in[it.ID] {
+			selected = append(selected, it)
+		}
+	}
+	return selected
 }
 
 // selectByTags returns the items carrying any of the given tags. The tag list
@@ -104,7 +123,9 @@ func selectByTags(items []store.Item, tags []string) []store.Item {
 }
 
 // unmatchedTags reports, per profile, the tags it requested that matched no
-// central item in any of the kinds it requested them for. Each profile is
+// item — central or project — in any of the kinds it requested them for. A tag
+// that only the project's items carry is not a typo: a project profile
+// selecting its own folders is the point of having one. Each profile is
 // checked on its own so a typo is attributed to the file that contains it,
 // rather than to whichever set of profiles happened to be selected together.
 func unmatchedTags(st *store.Store, profiles []Profile) []UnmatchedTag {
@@ -122,7 +143,7 @@ func unmatchedTags(st *store.Store, profiles []Profile) []UnmatchedTag {
 		}
 
 		for _, tag := range order {
-			if !anyStoreItemHasTag(st, requested[tag], tag) {
+			if !anyItemHasTag(st, requested[tag], tag) {
 				out = append(out, UnmatchedTag{Profile: p.Name, Tag: tag})
 			}
 		}
@@ -130,9 +151,9 @@ func unmatchedTags(st *store.Store, profiles []Profile) []UnmatchedTag {
 	return out
 }
 
-func anyStoreItemHasTag(st *store.Store, kinds []store.Kind, tag string) bool {
+func anyItemHasTag(st *store.Store, kinds []store.Kind, tag string) bool {
 	for _, k := range kinds {
-		for _, it := range st.BySource(k, store.OriginStore) {
+		for _, it := range st.ByKind(k) {
 			if it.HasTag(tag) {
 				return true
 			}

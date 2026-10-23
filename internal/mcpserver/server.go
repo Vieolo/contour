@@ -61,9 +61,16 @@ type Options struct {
 	EagerFiles []store.EagerFile
 
 	// Profiles are the bootstrap profiles loaded eagerly, composed in order.
-	// When empty no central rules are preloaded (local overlay rules still are),
-	// and the instructions explain how to select an entry point.
+	// They are looked up in the project's overlays first, then the central
+	// store. When empty no profile rules are preloaded, and the instructions
+	// explain where profiles are chosen.
 	Profiles []string
+
+	// SelectedLocal offers only the project items the profiles select, plus
+	// the eager files — a preset's `local: selected`. The zero value includes
+	// every project item, the default, so a caller that never heard of the
+	// setting cannot drop a project's rules by leaving it out.
+	SelectedLocal bool
 
 	// Notices are things the agent should know about how the session was set
 	// up — a requested preset that does not exist, say. Each is a paragraph,
@@ -146,12 +153,13 @@ func BuildInstructions(opts Options) (Instructions, error) {
 	}
 	b.WriteString(presetsSection(opts.Preset, opts.Presets))
 
+	sources := bootstrap.Sources{Central: opts.Root, Overlays: opts.Overlays}
 	if len(opts.Profiles) == 0 {
-		writeNoProfileNotice(&b, opts.Root)
-		return noProfileInstructions(b.String(), st), nil
+		writeNoProfileNotice(&b, sources)
+		return noProfileInstructions(b.String(), st, !opts.SelectedLocal), nil
 	}
 
-	profiles, missing, err := bootstrap.LoadAvailable(opts.Root, opts.Profiles)
+	profiles, missing, err := bootstrap.LoadAvailable(sources, opts.Profiles)
 	if err != nil {
 		return Instructions{}, err
 	}
@@ -160,9 +168,9 @@ func BuildInstructions(opts Options) (Instructions, error) {
 		// Every profile the project asked for is missing. Serve the session as
 		// if none had been selected — local rules eager, the whole store on the
 		// menu — rather than an empty one.
-		return noProfileInstructions(b.String(), st), nil
+		return noProfileInstructions(b.String(), st, !opts.SelectedLocal), nil
 	}
-	composed := bootstrap.Compose(profiles, st)
+	composed := bootstrap.Compose(profiles, st, !opts.SelectedLocal)
 
 	// Try the whole payload first; only if it will not fit does the notice cost
 	// anything, so a store within budget is delivered exactly as before.
@@ -220,25 +228,45 @@ func presetsSection(current string, presets []PresetSummary) string {
 	return b.String()
 }
 
-// noProfileInstructions builds the instructions for a session with no central
-// profile. Local project rules still load eagerly, so this path carries real
-// eager content and is budgeted like any other — a project adopting contour with
-// local rules alone must not lose them silently either.
+// noProfileInstructions builds the instructions for a session with no profile.
+// The project's rules still load eagerly — all of them, or with allLocal off,
+// just its eager files — so this path carries real eager content and is
+// budgeted like any other: a project adopting contour with local rules alone
+// must not lose them silently either.
 //
 // Menus go first when space runs short: the list tool reproduces them on demand,
 // whereas a local rule body has no other eager route to the agent.
-func noProfileInstructions(head string, st *store.Store) Instructions {
-	localRules := st.BySource(store.KindRules, store.OriginLocal)
-	// Central rules aren't eager here, but they remain fetchable, so list them
-	// alongside the on-demand skills and knowledge.
+func noProfileInstructions(head string, st *store.Store, allLocal bool) Instructions {
+	// The project's rules are eager — all of them, or under local: selected
+	// only the files the config names, since with no profile nothing else is
+	// selected.
+	var localRules []store.Item
+	for _, it := range st.BySource(store.KindRules, store.OriginLocal) {
+		if allLocal || it.Pinned {
+			localRules = append(localRules, it)
+		}
+	}
+
+	// Central rules aren't eager here, but they remain fetchable, so they join
+	// the menu alongside the on-demand skills and knowledge. Under local:
+	// selected the project's unselected items stay off the menus too: a menu
+	// line is startup context as much as a rule is, and keeping a large local
+	// store out of it is what the setting is for. They stay reachable through
+	// list, search and get.
+	menuItems := func(kind store.Kind) []store.Item {
+		if allLocal {
+			return st.ByKind(kind)
+		}
+		return st.BySource(kind, store.OriginStore)
+	}
 	menus := bootstrap.RenderMenu("Available rules", st.BySource(store.KindRules, store.OriginStore), FetchHint) +
-		bootstrap.RenderMenu("Available skills", st.ByKind(store.KindSkills), FetchHint) +
-		bootstrap.RenderMenu("Available knowledge", st.ByKind(store.KindKnowledge), FetchHint)
+		bootstrap.RenderMenu("Available skills", menuItems(store.KindSkills), FetchHint) +
+		bootstrap.RenderMenu("Available knowledge", menuItems(store.KindKnowledge), FetchHint)
 
 	// Only the local rules are eager, so they are the whole budgeted payload.
 	local := bootstrap.Composed{Rules: localRules}
-	if full := local.RenderWithin(0, FetchHint); len(head)+len(full.Body)+len(menus) <= InstructionsBudget {
-		return Instructions{Text: strings.TrimRight(head+full.Body+menus, "\n") + "\n", RuleIDs: full.ShownIDs}
+	if full := local.RenderWithin(0, FetchHint); len(head)+len(full.Body)+len(menus)+1 <= InstructionsBudget {
+		return Instructions{Text: strings.TrimRight(head+joinBlocks(full.Body, menus), "\n") + "\n", RuleIDs: full.ShownIDs}
 	}
 
 	// Menus dropped. If the local rules alone still overrun, excerpt them and say so.
@@ -257,6 +285,16 @@ func noProfileInstructions(head string, st *store.Store) Instructions {
 	}
 }
 
+// joinBlocks joins two markdown blocks with a blank line between them. A
+// rendered payload ends in a single newline, so concatenating the next section
+// straight on would run its heading into the last line of text.
+func joinBlocks(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	return strings.TrimRight(a, "\n") + "\n\n" + b
+}
+
 // MissingProfilesNotice tells the agent which of the project's profiles are not
 // in this machine's store, and so were not loaded. It renders as the empty
 // string when none are missing.
@@ -270,8 +308,8 @@ func MissingProfilesNotice(missing []string) string {
 	if len(missing) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("NOTE: this project uses the bootstrap %s %s, which %s not in this machine's contour store, "+
-		"so %s rules are not loaded. Mention this to the user so they can add %s.\n\n",
+	return fmt.Sprintf("NOTE: this project uses the bootstrap %s %s, which %s in neither the project nor this "+
+		"machine's contour store, so %s rules are not loaded. Mention this to the user so they can add %s.\n\n",
 		plural(len(missing), "profile", "profiles"), strings.Join(missing, ", "),
 		plural(len(missing), "is", "are"), plural(len(missing), "its", "their"),
 		plural(len(missing), "it", "them"))
@@ -338,13 +376,13 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// writeNoProfileNotice explains how to select an entry point when the server was
-// started without one, naming the profiles that exist.
-func writeNoProfileNotice(b *strings.Builder, root string) {
-	b.WriteString("No bootstrap profile is selected, so no rules were loaded eagerly.\n")
-	b.WriteString("Select one or more by passing --bootstrap <name> when starting the server.\n")
+// writeNoProfileNotice explains where profiles are chosen when the session has
+// none, naming the profiles that exist.
+func writeNoProfileNotice(b *strings.Builder, src bootstrap.Sources) {
+	b.WriteString("No bootstrap profile is selected, so no profile rules were loaded eagerly.\n")
+	b.WriteString("Profiles are chosen by the presets in the project's contour config.\n")
 
-	profiles, err := bootstrap.LoadProfiles(root)
+	profiles, err := bootstrap.LoadProfiles(src)
 	if err != nil || len(profiles) == 0 {
 		b.WriteString("\n")
 		return

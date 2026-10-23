@@ -22,15 +22,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Profile is a bootstrap entry point, parsed from a markdown file in the
-// store's bootstrap/ directory. Its frontmatter holds the tag selections; its
-// body is an optional preamble emitted ahead of the rules.
+// Profile is a bootstrap entry point, parsed from a markdown file in a
+// bootstrap/ directory — the central store's, or a project overlay's. Its
+// frontmatter holds the tag selections; its body is an optional preamble
+// emitted ahead of the rules.
 type Profile struct {
 	// Name is the profile's filename without the extension (e.g. "python").
 	Name string
 
 	// Path is the absolute path to the profile file.
 	Path string
+
+	// Source is where the profile was found: the project or the central store.
+	Source store.Origin
+
+	// Overrides reports that this is a project profile taking the place of a
+	// central one with the same name.
+	Overrides bool
 
 	// Description is the profile's one-line summary.
 	Description string
@@ -67,15 +75,121 @@ func (p Profile) TagsFor(kind store.Kind) []string {
 	return nil
 }
 
-// Dir returns the bootstrap directory inside a store root.
+// Dir returns the bootstrap directory inside a store root or overlay.
 func Dir(root string) string {
 	return filepath.Join(root, store.BootstrapDir)
 }
 
-// LoadProfiles reads every profile in the store's bootstrap/ directory, ordered
-// by name. A missing bootstrap/ directory yields no profiles and no error.
-func LoadProfiles(root string) ([]Profile, error) {
-	dir := Dir(root)
+// Sources says where profiles are looked up: the project's overlays first, then
+// the central store.
+//
+// A profile in the project overrides a central one of the same name. That is
+// the rule local items already follow — the project's own definition wins —
+// and it is what makes a profile portable: one committed with the project means
+// the same thing on every machine, whatever each developer's store holds under
+// that name.
+type Sources struct {
+	// Central is the central store's root. Empty leaves the central store out.
+	Central string
+
+	// Overlays are the project's overlay directories, in precedence order.
+	Overlays []string
+}
+
+// CentralOnly looks profiles up in the central store alone.
+func CentralOnly(root string) Sources { return Sources{Central: root} }
+
+// find locates a profile by name, reporting where it was found and whether it
+// overrides a central profile of the same name.
+func (s Sources) find(name string) (path string, origin store.Origin, overrides, found bool, err error) {
+	central := ""
+	if s.Central != "" {
+		central = filepath.Join(Dir(s.Central), name+store.MarkdownExt)
+		if ok, err := isFile(central); err != nil {
+			return "", "", false, false, err
+		} else if !ok {
+			central = ""
+		}
+	}
+	for _, ov := range s.Overlays {
+		local := filepath.Join(Dir(ov), name+store.MarkdownExt)
+		ok, err := isFile(local)
+		if err != nil {
+			return "", "", false, false, err
+		}
+		if ok {
+			return local, store.OriginLocal, central != "", true, nil
+		}
+	}
+	if central != "" {
+		return central, store.OriginStore, false, true, nil
+	}
+	return "", "", false, false, nil
+}
+
+func isFile(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat %s: %w", path, err)
+	}
+	return !info.IsDir(), nil
+}
+
+// load reads the profile found at path, recording where it came from.
+func load(path string, origin store.Origin, overrides bool) (Profile, error) {
+	p, err := loadProfile(path)
+	if err != nil {
+		return Profile{}, err
+	}
+	p.Source, p.Overrides = origin, overrides
+	return p, nil
+}
+
+// LoadProfiles reads every profile available — the project's and the central
+// store's, a project profile replacing a central one of the same name — ordered
+// by name. Missing bootstrap/ directories yield no profiles and no error.
+func LoadProfiles(src Sources) ([]Profile, error) {
+	byName := make(map[string]Profile)
+
+	if src.Central != "" {
+		central, err := readDir(Dir(src.Central), store.OriginStore)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range central {
+			byName[p.Name] = p
+		}
+	}
+	// Overlays in reverse precedence, so the first overlay's profile is the one
+	// left standing when two define the same name.
+	for i := len(src.Overlays) - 1; i >= 0; i-- {
+		local, err := readDir(Dir(src.Overlays[i]), store.OriginLocal)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range local {
+			if prev, ok := byName[p.Name]; ok {
+				p.Overrides = prev.Source == store.OriginStore || prev.Overrides
+			}
+			byName[p.Name] = p
+		}
+	}
+
+	profiles := make([]Profile, 0, len(byName))
+	for _, p := range byName {
+		profiles = append(profiles, p)
+	}
+	// ReadDir orders by filename, which would put "python-frontend" before
+	// "python" ('-' sorts before '.'). Order by profile name instead.
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+	return profiles, nil
+}
+
+// readDir reads the profiles in one bootstrap/ directory.
+func readDir(dir string, origin store.Origin) ([]Profile, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -89,37 +203,36 @@ func LoadProfiles(root string) ([]Profile, error) {
 		if e.IsDir() || filepath.Ext(e.Name()) != store.MarkdownExt {
 			continue
 		}
-		p, err := loadProfile(filepath.Join(dir, e.Name()))
+		p, err := load(filepath.Join(dir, e.Name()), origin, false)
 		if err != nil {
 			return nil, err
 		}
 		profiles = append(profiles, p)
 	}
-
-	// ReadDir orders by filename, which would put "python-frontend" before
-	// "python" ('-' sorts before '.'). Order by profile name instead.
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
 	return profiles, nil
 }
 
 // LoadProfile reads a single profile by name — its filename without the
-// extension.
-func LoadProfile(root, name string) (Profile, error) {
-	path := filepath.Join(Dir(root), name+store.MarkdownExt)
-	if _, err := os.Stat(path); err != nil {
+// extension — from the project first, then the central store.
+func LoadProfile(src Sources, name string) (Profile, error) {
+	path, origin, overrides, found, err := src.find(name)
+	if err != nil {
+		return Profile{}, err
+	}
+	if !found {
 		return Profile{}, fmt.Errorf("no bootstrap profile named %q", name)
 	}
-	return loadProfile(path)
+	return load(path, origin, overrides)
 }
 
 // LoadNamed reads the named profiles, preserving the order given — that order
 // decides the order of the composed payload. It fails on the first name that
 // does not exist, rather than quietly composing a partial entry point from the
 // rest.
-func LoadNamed(root string, names []string) ([]Profile, error) {
+func LoadNamed(src Sources, names []string) ([]Profile, error) {
 	profiles := make([]Profile, 0, len(names))
 	for _, name := range names {
-		p, err := LoadProfile(root, name)
+		p, err := LoadProfile(src, name)
 		if err != nil {
 			return nil, err
 		}
@@ -133,23 +246,23 @@ func LoadNamed(root string, names []string) ([]Profile, error) {
 // is an error.
 //
 // It is the lenient counterpart to LoadNamed, for when the names come from a
-// project config rather than from the person at the keyboard. A project names
-// profiles that live in each developer's own store, so one developer missing
-// one is an ordinary state, not a failure. Treating it as fatal took down the
-// whole MCP server, and with it the project's own local rules, which have
-// nothing to do with the missing profile. Serving what exists and saying what
-// is missing is strictly more useful.
-func LoadAvailable(root string, names []string) (profiles []Profile, missing []string, err error) {
+// project config rather than from the person at the keyboard. A project may
+// name profiles that live in each developer's own store, so one developer
+// missing one is an ordinary state, not a failure. Treating it as fatal took
+// down the whole MCP server, and with it the project's own local rules, which
+// have nothing to do with the missing profile. Serving what exists and saying
+// what is missing is strictly more useful.
+func LoadAvailable(src Sources, names []string) (profiles []Profile, missing []string, err error) {
 	for _, name := range names {
-		path := filepath.Join(Dir(root), name+store.MarkdownExt)
-		if _, statErr := os.Stat(path); statErr != nil {
-			if os.IsNotExist(statErr) {
-				missing = append(missing, name)
-				continue
-			}
-			return nil, nil, fmt.Errorf("stat %s: %w", path, statErr)
+		path, origin, overrides, found, err := src.find(name)
+		if err != nil {
+			return nil, nil, err
 		}
-		p, err := loadProfile(path)
+		if !found {
+			missing = append(missing, name)
+			continue
+		}
+		p, err := load(path, origin, overrides)
 		if err != nil {
 			return nil, nil, err
 		}

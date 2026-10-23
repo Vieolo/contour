@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/vieolo/contour/internal/bootstrap"
 	"github.com/vieolo/contour/internal/project"
 	"github.com/vieolo/contour/internal/store"
 )
@@ -60,10 +61,16 @@ func loadProjectStore(central string) (*store.Store, error) {
 
 // loadPresetStore loads the store as one preset sees it: the central store and
 // overlays, plus that preset's eager files alone. Composing a payload needs
-// exactly this — every local rule in the store is delivered eagerly, so another
-// preset's eager files here would leak into this one's.
+// exactly this — the eager files in the store are always delivered, so another
+// preset's here would leak into this one's.
 func loadPresetStore(central string, overlays []string, preset project.Preset) (*store.Store, error) {
 	return store.LoadProject(central, overlays, preset.EagerFiles)
+}
+
+// profileSources looks profiles up in the project's overlays, then the central
+// store.
+func profileSources(central string, overlays []string) bootstrap.Sources {
+	return bootstrap.Sources{Central: central, Overlays: overlays}
 }
 
 // resolveKinds turns an optional kind argument into the kinds to show.

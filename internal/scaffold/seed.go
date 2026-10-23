@@ -31,15 +31,30 @@ const localReadmeSeed = `# Project-local context
 This folder holds contour context that belongs to this project alone. contour
 merges it over your central store whenever it runs in this project.
 
-Everything here is live — there is no opt-in:
-
-    rules/       Loaded EAGERLY into every session in this project.
+    bootstrap/   This project's own profiles.
+    rules/       Loaded EAGERLY into sessions in this project.
     skills/      Listed on the menu, fetched when relevant.
     knowledge/   Listed on the menu, fetched when relevant.
 
-No tags or profiles are needed: being in this project is scope enough. Where a
-local item conflicts with one from your central store, the local one wins, and
-contour tells the agent so.
+By default everything here is live — no tags or profiles needed, being in this
+project is scope enough. A preset can instead set "local: selected" and take
+only what its profiles select by tag; folder names are tags, so
+rules/frontend/ is tagged "frontend". Where a local item conflicts with one
+from your central store, the local one wins, and contour tells the agent so.
+
+## Profiles
+
+A profile here is written like one in your central store, and takes the place
+of a central profile with the same name in this project:
+
+    ---
+    description: The React app
+    rules: [frontend]
+    skills: [frontend, testing]
+    ---
+
+Committed with the project, it means the same thing on every machine, whatever
+each developer's own store holds. Name it from a preset in the project config.
 
 ## Formats
 
@@ -72,8 +87,9 @@ When something here turns out to apply to other projects too, move it into
 your central store and select it from a profile. While both copies exist the
 local one is authoritative, so nothing changes until you delete it here.
 
-This README is documentation only: contour reads nothing outside rules/,
-skills/ and knowledge/. The .gitkeep files keep the empty folders in git.
+This README is documentation only: contour reads nothing outside bootstrap/,
+rules/, skills/ and knowledge/. The .gitkeep files keep the empty folders in
+git.
 `
 
 const readmeSeed = `# contour store

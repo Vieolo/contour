@@ -222,6 +222,7 @@ func loadEagerFileItems(files []EagerFile) ([]Item, error) {
 			Description: fm.Description,
 			Tags:        fm.Tags,
 			Body:        body,
+			Pinned:      true,
 		})
 	}
 	return items, nil

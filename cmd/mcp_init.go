@@ -13,6 +13,7 @@ import (
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/mcpconfig"
 	"github.com/vieolo/contour/internal/project"
+	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/termange"
 	"github.com/vieolo/termange/tui"
 )
@@ -197,7 +198,7 @@ func pickProfiles(projectDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	profiles, err := bootstrap.LoadProfiles(home.Path)
+	profiles, err := bootstrap.LoadProfiles(profileSources(home.Path, store.DiscoverOverlays(projectDir)))
 	if err != nil {
 		return nil, err
 	}
@@ -284,11 +285,11 @@ func warnMissingProfiles(cfg project.Config) {
 	if err != nil {
 		return
 	}
-	_, missing, err := bootstrap.LoadAvailable(home.Path, slices.Compact(sortedCopy(names)))
+	_, missing, err := bootstrap.LoadAvailable(profileSources(home.Path, cwdOverlays()), slices.Compact(sortedCopy(names)))
 	if err != nil || len(missing) == 0 {
 		return
 	}
-	termange.PrintWarningf("\nThis project's presets use profiles that are not in your store: %s\n"+
+	termange.PrintWarningf("\nThis project's presets use profiles found in neither the project nor your store: %s\n"+
 		"Sessions will start without their rules until you add them (%s bootstrap lists yours).\n",
 		strings.Join(missing, ", "), config.Program)
 }
@@ -309,8 +310,19 @@ func checkProfilesExist(names []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := bootstrap.LoadNamed(home.Path, names); err != nil {
-		return withAvailableProfiles(home.Path, err)
+	src := profileSources(home.Path, cwdOverlays())
+	if _, err := bootstrap.LoadNamed(src, names); err != nil {
+		return withAvailableProfiles(src, err)
 	}
 	return nil
+}
+
+// cwdOverlays returns the working directory's overlays — the project's, since
+// mcp-init runs from its root.
+func cwdOverlays() []string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	return store.DiscoverOverlays(wd)
 }

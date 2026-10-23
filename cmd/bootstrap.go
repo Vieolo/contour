@@ -12,6 +12,7 @@ import (
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/mcpserver"
 	"github.com/vieolo/contour/internal/project"
+	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/contour/internal/unic"
 	"github.com/vieolo/termange"
 )
@@ -91,21 +92,23 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 			}
 
 		case len(args) == 0:
-			return listProfiles(home.Path, cfg)
+			return listProfiles(profileSources(home.Path, overlays), cfg)
 
 		default:
 			// Named profiles are typed by a person, so a typo fails here. The
-			// project's files come from its default preset, as a session's would.
-			profiles, err := bootstrap.LoadNamed(home.Path, args)
+			// project's files and settings come from its default preset, as a
+			// session's would.
+			src := profileSources(home.Path, overlays)
+			profiles, err := bootstrap.LoadNamed(src, args)
 			if err != nil {
-				return withAvailableProfiles(home.Path, err)
+				return withAvailableProfiles(src, err)
 			}
 			def, _ := cfg.Select("")
 			st, err := loadPresetStore(home.Path, overlays, def)
 			if err != nil {
 				return err
 			}
-			composed = bootstrap.Compose(profiles, st)
+			composed = bootstrap.Compose(profiles, st, def.Local == project.LocalAll)
 		}
 
 		// Diagnostics go to stderr so stdout stays a clean, pipeable payload.
@@ -168,18 +171,19 @@ func init() {
 
 // composePreset composes a preset as a session starting with it would get it:
 // the given profiles — normally the preset's own — over the store with that
-// preset's eager files. A profile missing from this machine's store is reported,
-// not fatal, so the rest still arrives.
+// preset's eager files and its local setting. A profile found in neither the
+// project nor this machine's store is reported, not fatal, so the rest still
+// arrives.
 func composePreset(root string, overlays []string, preset project.Preset, profileNames []string) (bootstrap.Composed, []string, error) {
 	st, err := loadPresetStore(root, overlays, preset)
 	if err != nil {
 		return bootstrap.Composed{}, nil, err
 	}
-	profiles, missing, err := bootstrap.LoadAvailable(root, profileNames)
+	profiles, missing, err := bootstrap.LoadAvailable(profileSources(root, overlays), profileNames)
 	if err != nil {
 		return bootstrap.Composed{}, nil, err
 	}
-	return bootstrap.Compose(profiles, st), missing, nil
+	return bootstrap.Compose(profiles, st, preset.Local == project.LocalAll), missing, nil
 }
 
 // presetHeader opens a preset loaded part-way through a session: what it is,
@@ -210,10 +214,10 @@ func presetsAvailable(cfg project.Config) string {
 	return " (available: " + strings.Join(cfg.Names(), ", ") + ")"
 }
 
-// listProfiles shows the available entry points: the store's profiles, and this
-// project's presets. This branch is for a human, so unlike the payload it is
-// colourised.
-func listProfiles(root string, cfg project.Config) error {
+// listProfiles shows the available entry points: this project's presets, and the
+// profiles — the project's own, then your central store's. This branch is for a
+// human, so unlike the payload it is colourised.
+func listProfiles(src bootstrap.Sources, cfg project.Config) error {
 	if len(cfg.Presets) > 0 {
 		termange.PrintInfof("presets in %s\n\n", cfg.Path)
 		for _, p := range cfg.Presets {
@@ -226,19 +230,26 @@ func listProfiles(root string, cfg project.Config) error {
 		termange.PrintInfof("\nEmit one with: %s bootstrap --preset <name>\n\n", config.Program)
 	}
 
-	profiles, err := bootstrap.LoadProfiles(root)
+	profiles, err := bootstrap.LoadProfiles(src)
 	if err != nil {
 		return err
 	}
 	if len(profiles) == 0 {
-		termange.PrintWarningf("No bootstrap profiles found in %s\n", bootstrap.Dir(root))
+		termange.PrintWarningf("No bootstrap profiles found in %s\n", bootstrap.Dir(src.Central))
 		termange.PrintInfof("Add one, then run: %s bootstrap <name>\n", config.Program)
 		return nil
 	}
 
-	termange.PrintInfof("bootstrap profiles in %s\n\n", bootstrap.Dir(root))
+	termange.PrintInfof("bootstrap profiles (from %s, and this project's overlays)\n\n", bootstrap.Dir(src.Central))
 	for _, p := range profiles {
-		termange.PrintColorf(termange.ColorGreen, "  %s\n", p.Name)
+		switch {
+		case p.Overrides:
+			termange.PrintColorf(termange.ColorGreen, "  %s  (project — overrides your central profile)\n", p.Name)
+		case p.Source == store.OriginLocal:
+			termange.PrintColorf(termange.ColorGreen, "  %s  (project)\n", p.Name)
+		default:
+			termange.PrintColorf(termange.ColorGreen, "  %s\n", p.Name)
+		}
 		if p.Description != "" {
 			termange.PrintInfof("      %s\n", p.Description)
 		}
@@ -251,8 +262,8 @@ func listProfiles(root string, cfg project.Config) error {
 }
 
 // withAvailableProfiles enriches a lookup failure with the names that do exist.
-func withAvailableProfiles(root string, cause error) error {
-	profiles, err := bootstrap.LoadProfiles(root)
+func withAvailableProfiles(src bootstrap.Sources, cause error) error {
+	profiles, err := bootstrap.LoadProfiles(src)
 	if err != nil || len(profiles) == 0 {
 		return cause
 	}
