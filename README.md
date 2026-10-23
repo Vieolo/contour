@@ -44,7 +44,7 @@ Write a rule once; every project and every session can reach it.
     - [Presets in a monorepo](#presets-in-a-monorepo)
     - [Keeping your own store out](#keeping-your-own-store-out)
     - [Where the config lives](#where-the-config-lives)
-    - [Upgrading from the old config](#upgrading-from-the-old-config)
+    - [Upgrading from 0.2](#upgrading-from-02)
   - [CLI reference](#cli-reference)
   - [Using contour with Claude Code](#using-contour-with-claude-code)
     - [Wiring it up](#wiring-it-up)
@@ -570,9 +570,9 @@ So the precedence, in full:
 
 `mcp-init` only writes a config when the project has none, and puts it where it will be read — into `go.yaml` if the project keeps one, otherwise `.contour.yaml` — so it never files settings somewhere permanently shadowed, and never rewrites the ones already there.
 
-### Upgrading from the old config
+### Upgrading from 0.2
 
-Before presets (contour 0.2), the config held `bootstrap` and `eager_files` at the top level. The first contour command run in such a project migrates it: those settings become the `default` preset's `startup.profiles` and `startup.files`, the file is rewritten in the new shape — documented like a freshly generated one — and contour says so, so you can review the change and commit it. What loads does not change.
+In contour 0.2, the config held `bootstrap` and `eager_files` at the top level. After upgrading to 0.3, the first contour command run in such a project migrates it: those settings become the `default` preset's `startup.profiles` and `startup.files`, the file is rewritten in the new shape — documented like a freshly generated one — and contour says so, so you can review the change and commit it. What loads does not change.
 
 The migration runs on whichever command reads the config first, including the MCP server an agent starts. If the file cannot be written, the session runs on the migrated settings anyway, with a warning. A config holding both shapes at once is refused rather than guessed at. In a `go.yaml`, the rewrite also drops the file's blank lines, which the YAML library cannot preserve.
 
@@ -730,7 +730,7 @@ macOS's default `PATH` at all — a bare `contour` would simply not be found.
 by construction.
 
 It records the symlink (`/opt/homebrew/bin/contour`), never the versioned target
-underneath it (`/opt/homebrew/Cellar/contour/0.2.0/...`), so the entry keeps
+underneath it (`/opt/homebrew/Cellar/contour/0.3.0/...`), so the entry keeps
 working after `brew upgrade`.
 
 The profiles and eager files come from the project config's presets (see
