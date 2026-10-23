@@ -477,3 +477,35 @@ func TestRenderWithinTinyBudget(t *testing.T) {
 		t.Error("a rule body leaked into an excerpt that cannot hold one")
 	}
 }
+
+// LoadAvailable serves what exists and reports what does not, in the order
+// asked — the order decides how the profiles compose.
+func TestLoadAvailableReportsMissingProfiles(t *testing.T) {
+	root := testRoot(t)
+
+	profiles, missing, err := LoadAvailable(root, []string{"nope", "python", "gone", "empty"})
+	if err != nil {
+		t.Fatalf("LoadAvailable: %v", err)
+	}
+	var names []string
+	for _, p := range profiles {
+		names = append(names, p.Name)
+	}
+	if want := []string{"python", "empty"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("loaded %v, want %v", names, want)
+	}
+	if want := []string{"nope", "gone"}; !reflect.DeepEqual(missing, want) {
+		t.Errorf("missing = %v, want %v", missing, want)
+	}
+}
+
+// Missing is ordinary; broken is not. A profile that exists but cannot be
+// parsed must still fail loudly rather than be quietly skipped.
+func TestLoadAvailableFailsOnABrokenProfile(t *testing.T) {
+	root := testRoot(t)
+	write(t, root, "bootstrap/broken.md", "---\nrules: [unclosed\n---\n")
+
+	if _, _, err := LoadAvailable(root, []string{"broken"}); err == nil {
+		t.Error("LoadAvailable skipped a profile that exists but cannot be parsed")
+	}
+}

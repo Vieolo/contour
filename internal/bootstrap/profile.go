@@ -128,6 +128,36 @@ func LoadNamed(root string, names []string) ([]Profile, error) {
 	return profiles, nil
 }
 
+// LoadAvailable reads the named profiles that exist, in the order given, and
+// reports the names that do not. Only a profile that exists but cannot be read
+// is an error.
+//
+// It is the lenient counterpart to LoadNamed, for when the names come from a
+// project config rather than from the person at the keyboard. A project names
+// profiles that live in each developer's own store, so one developer missing
+// one is an ordinary state, not a failure. Treating it as fatal took down the
+// whole MCP server, and with it the project's own local rules, which have
+// nothing to do with the missing profile. Serving what exists and saying what
+// is missing is strictly more useful.
+func LoadAvailable(root string, names []string) (profiles []Profile, missing []string, err error) {
+	for _, name := range names {
+		path := filepath.Join(Dir(root), name+store.MarkdownExt)
+		if _, statErr := os.Stat(path); statErr != nil {
+			if os.IsNotExist(statErr) {
+				missing = append(missing, name)
+				continue
+			}
+			return nil, nil, fmt.Errorf("stat %s: %w", path, statErr)
+		}
+		p, err := loadProfile(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, missing, nil
+}
+
 func loadProfile(path string) (Profile, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {

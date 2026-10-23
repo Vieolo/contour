@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -84,9 +85,10 @@ var mcpInitCmd = &cobra.Command{
 		//    touched, so a conflict leaves nothing half-done.
 		cfg, created, err := project.Ensure(cwd, mcpInitProfiles, detectEagerFiles(cwd))
 		if errors.Is(err, project.ErrProfileConflict) {
-			return fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+			def, _ := cfg.Select("")
+			return fmt.Errorf("%s already exists (default preset: bootstrap [%s]) and mcp-init never changes an existing project config — "+
 				"edit that file to switch profiles, or run without --bootstrap to just register contour on this machine",
-				cfg.Path, strings.Join(cfg.Bootstrap, ", "))
+				cfg.Path, strings.Join(def.Bootstrap, ", "))
 		}
 		if err != nil {
 			return err
@@ -111,28 +113,31 @@ var mcpInitCmd = &cobra.Command{
 			termange.PrintSuccessf("Added the %q server to %s\n", mcpInitName, mcpInitFile)
 		}
 		termange.PrintInfof("  command: %s\n", exe)
-		if created {
+		switch {
+		case created:
 			termange.PrintInfof("  config:  %s (created)\n", cfg.Path)
-		} else {
+		case cfg.Migrated:
+			termange.PrintInfof("  config:  %s (migrated to presets — review and commit it)\n", cfg.Path)
+		default:
 			termange.PrintInfof("  config:  %s (existing, left unchanged)\n", cfg.Path)
 		}
-		for _, p := range cfg.Bootstrap {
+		if len(cfg.Presets) > 1 {
+			termange.PrintInfof("  presets: %s\n", strings.Join(cfg.Names(), ", "))
+		}
+		def, _ := cfg.Select("")
+		for _, p := range def.Bootstrap {
 			termange.PrintInfof("  profile: %s\n", p)
 		}
-		for _, f := range cfg.EagerFiles {
+		for _, f := range def.EagerFiles {
 			termange.PrintInfof("  eager:   %s\n", f.ID)
 		}
 
-		if len(cfg.Bootstrap) == 0 {
-			termange.PrintWarningf("\nNo profile set — add `bootstrap: [<name>]` to %s (%s bootstrap lists them).\n", cfg.Path, config.Program)
-		} else if !created {
-			// The config came from the team, but the store is this machine's. A
-			// profile missing here makes the MCP server fail to start, so say so
-			// now, at setup, rather than when an agent first connects.
-			if err := checkProfilesExist(cfg.Bootstrap); err != nil {
-				termange.PrintWarningf("\nThis project's profiles are not all in your store: %v\n"+
-					"The MCP server will not start until they are.\n", err)
-			}
+		if len(def.Bootstrap) == 0 {
+			termange.PrintWarningf("\nThe default preset loads no profile — add `bootstrap: [<name>]` to it in %s (%s bootstrap lists them).\n",
+				cfg.Path, config.Program)
+		}
+		if !created {
+			warnMissingProfiles(cfg)
 		}
 		return nil
 	},
@@ -182,9 +187,10 @@ func pickProfiles(projectDir string) ([]string, error) {
 		return nil, err
 	}
 	if existing.Path != "" {
-		return nil, fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+		def, _ := existing.Select("")
+		return nil, fmt.Errorf("%s already exists (default preset: bootstrap [%s]) and mcp-init never changes an existing project config — "+
 			"run without --interactive to just register contour on this machine, or edit that file to switch profiles",
-			existing.Path, strings.Join(existing.Bootstrap, ", "))
+			existing.Path, strings.Join(def.Bootstrap, ", "))
 	}
 
 	home, err := resolveStore()
@@ -260,6 +266,37 @@ func profileChoices(profiles []bootstrap.Profile) ([]tui.SelectItem, map[string]
 func isTerminal(f *os.File) bool {
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// warnMissingProfiles tells a developer which of the profiles the project's
+// presets use are missing from their store. The config came from the team, but
+// the store is this machine's; saying so at setup beats discovering it from a
+// session that quietly lacks some rules.
+func warnMissingProfiles(cfg project.Config) {
+	var names []string
+	for _, p := range cfg.Presets {
+		names = append(names, p.Bootstrap...)
+	}
+	if len(names) == 0 {
+		return
+	}
+	home, err := resolveStore()
+	if err != nil {
+		return
+	}
+	_, missing, err := bootstrap.LoadAvailable(home.Path, slices.Compact(sortedCopy(names)))
+	if err != nil || len(missing) == 0 {
+		return
+	}
+	termange.PrintWarningf("\nThis project's presets use profiles that are not in your store: %s\n"+
+		"Sessions will start without their rules until you add them (%s bootstrap lists yours).\n",
+		strings.Join(missing, ", "), config.Program)
+}
+
+func sortedCopy(s []string) []string {
+	out := slices.Clone(s)
+	slices.Sort(out)
+	return out
 }
 
 // checkProfilesExist rejects an unknown profile now rather than leaving the

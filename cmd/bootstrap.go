@@ -87,7 +87,10 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 		if err != nil {
 			return nil, nil, asToolError(err)
 		}
-		profiles, err := bootstrap.LoadNamed(home.Path, mcpProfiles)
+		// Lenient, like the instructions: a profile missing from this machine's
+		// store is reported, not fatal, so the rest of the session's rules
+		// still arrive.
+		profiles, missing, err := bootstrap.LoadAvailable(home.Path, mcpProfiles)
 		if err != nil {
 			return nil, nil, asToolError(err)
 		}
@@ -96,7 +99,7 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 		// Without a profile there are no eager central rules, but a project's own
 		// local rules still apply — so this is never an empty answer by default.
 		composed := bootstrap.Compose(profiles, st)
-		return mcpserver.TextResult(composed.Render(mcpserver.FetchHint),
+		return mcpserver.TextResult(mcpserver.MissingProfilesNotice(missing)+composed.Render(mcpserver.FetchHint),
 			"No rules are in effect: this store has no bootstrap profile selected and the project has no local rules."), nil, nil
 	},
 }

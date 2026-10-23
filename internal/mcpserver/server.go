@@ -65,6 +65,12 @@ type Options struct {
 	// and the instructions explain how to select an entry point.
 	Profiles []string
 
+	// Notices are things the agent should know about how the session was set
+	// up — a requested preset that does not exist, say. Each is a paragraph,
+	// placed right after the opening lines, where a client that caps the
+	// instructions cannot cut it.
+	Notices []string
+
 	// Version is reported to clients during initialisation.
 	Version string
 }
@@ -124,21 +130,32 @@ func BuildInstructions(opts Options) (string, error) {
 
 	var b strings.Builder
 	b.WriteString(intro)
+	for _, n := range opts.Notices {
+		b.WriteString(strings.TrimSpace(n))
+		b.WriteString("\n\n")
+	}
 
 	if len(opts.Profiles) == 0 {
 		writeNoProfileNotice(&b, opts.Root)
 		return noProfileInstructions(b.String(), st), nil
 	}
 
-	profiles, err := bootstrap.LoadNamed(opts.Root, opts.Profiles)
+	profiles, missing, err := bootstrap.LoadAvailable(opts.Root, opts.Profiles)
 	if err != nil {
 		return "", err
+	}
+	b.WriteString(MissingProfilesNotice(missing))
+	if len(profiles) == 0 {
+		// Every profile the project asked for is missing. Serve the session as
+		// if none had been selected — local rules eager, the whole store on the
+		// menu — rather than an empty one.
+		return noProfileInstructions(b.String(), st), nil
 	}
 	composed := bootstrap.Compose(profiles, st)
 
 	// Try the whole payload first; only if it will not fit does the notice cost
 	// anything, so a store within budget is delivered exactly as before.
-	avail := InstructionsBudget - len(intro)
+	avail := InstructionsBudget - b.Len()
 	ex := composed.RenderWithin(avail, FetchHint)
 	if ex.Complete {
 		b.WriteString(ex.Body)
@@ -181,6 +198,26 @@ func noProfileInstructions(head string, st *store.Store) string {
 	}
 	ex := local.RenderWithin(avail-noticeReserve, FetchHint)
 	return strings.TrimRight(head+excerptNotice(ex)+ex.Body+excerptCloser(ex), "\n") + "\n"
+}
+
+// MissingProfilesNotice tells the agent which of the project's profiles are not
+// in this machine's store, and so were not loaded. It renders as the empty
+// string when none are missing.
+//
+// The agent is asked to pass it on because the developer is the only one who
+// can fix it, and nothing else would tell them: the session otherwise looks
+// healthy, just quietly missing some of the rules the project relies on. It
+// goes near the top of the instructions, where a client that caps them cannot
+// cut it.
+func MissingProfilesNotice(missing []string) string {
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("NOTE: this project uses the bootstrap %s %s, which %s not in this machine's contour store, "+
+		"so %s rules are not loaded. Mention this to the user so they can add %s.\n\n",
+		plural(len(missing), "profile", "profiles"), strings.Join(missing, ", "),
+		plural(len(missing), "is", "are"), plural(len(missing), "its", "their"),
+		plural(len(missing), "it", "them"))
 }
 
 // intro opens the instructions. It states that the rules are binding before any
