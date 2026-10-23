@@ -103,7 +103,11 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 			if err != nil {
 				return withAvailableProfiles(src, err)
 			}
+			// Naming profiles is an explicit request to see what they compose
+			// to, central ones included, so central: false — which governs what
+			// an agent's session gets — does not apply here.
 			def, _ := cfg.Select("")
+			def.Central = true
 			st, err := loadPresetStore(home.Path, overlays, def)
 			if err != nil {
 				return err
@@ -116,7 +120,7 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 			fmt.Fprintf(os.Stderr, "[%s build] store: %s\n", config.Label, home.Path)
 		}
 		if len(missing) > 0 {
-			fmt.Fprintf(os.Stderr, "warning: profile(s) not in your store, left out: %s\n", strings.Join(missing, ", "))
+			fmt.Fprintf(os.Stderr, "warning: profile(s) not found for this preset, left out: %s\n", strings.Join(missing, ", "))
 		}
 		for _, u := range composed.UnmatchedTags {
 			fmt.Fprintf(os.Stderr, "warning: profile %q requests tag %q, which matches no item\n", u.Profile, u.Tag)
@@ -143,7 +147,7 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 				return nil, nil, asToolError(err)
 			}
 			mcpUsage.Bootstrap(preset.Name)
-			return mcpserver.TextResult(mcpserver.MissingProfilesNotice(missing)+composed.Render(mcpserver.FetchHint),
+			return mcpserver.TextResult(mcpserver.MissingProfilesNotice(missing, preset.Central)+composed.Render(mcpserver.FetchHint),
 				"No rules are in effect: this session has no bootstrap profile and the project has no local rules."), nil, nil
 		}
 
@@ -158,9 +162,10 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 			return nil, nil, asToolError(err)
 		}
 		mcpUsage.Bootstrap(preset.Name)
+		widenSession(preset)
 
 		body, repeated := composed.RenderSkipping(func(id string) bool { return mcpInInstructions[id] }, mcpserver.FetchHint)
-		return mcpserver.TextResult(presetHeader(preset, repeated)+mcpserver.MissingProfilesNotice(missing)+body,
+		return mcpserver.TextResult(presetHeader(preset, repeated)+mcpserver.MissingProfilesNotice(missing, preset.Central)+body,
 			fmt.Sprintf("The %q preset adds nothing beyond what is already in effect.", preset.Name)), nil, nil
 	},
 }
@@ -171,15 +176,14 @@ func init() {
 
 // composePreset composes a preset as a session starting with it would get it:
 // the given profiles — normally the preset's own — over the store with that
-// preset's eager files and its local setting. A profile found in neither the
-// project nor this machine's store is reported, not fatal, so the rest still
-// arrives.
+// preset's eager files and its local and central settings. A profile it cannot
+// find is reported, not fatal, so the rest still arrives.
 func composePreset(root string, overlays []string, preset project.Preset, profileNames []string) (bootstrap.Composed, []string, error) {
 	st, err := loadPresetStore(root, overlays, preset)
 	if err != nil {
 		return bootstrap.Composed{}, nil, err
 	}
-	profiles, missing, err := bootstrap.LoadAvailable(profileSources(root, overlays), profileNames)
+	profiles, missing, err := bootstrap.LoadAvailable(profileSources(presetCentral(root, preset), overlays), profileNames)
 	if err != nil {
 		return bootstrap.Composed{}, nil, err
 	}

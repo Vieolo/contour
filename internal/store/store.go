@@ -51,14 +51,21 @@ func LoadLayered(central string, overlays ...string) (*Store, error) {
 // any listed eager files as local rules. Items are added in order and a later
 // source wins on an identical ID, so overlays override the store and eager files
 // override both.
+//
+// An empty central root leaves the central store out entirely — a preset that
+// uses only the project's local store. It must be skipped rather than walked:
+// joined to "rules", an empty root would read a rules/ folder in the working
+// directory and pass the project's files off as central ones.
 func LoadProject(central string, overlays []string, eagerFiles []EagerFile) (*Store, error) {
 	groups := make([][]Item, 0, len(overlays)+2)
 
-	storeItems, err := loadItems(central, OriginStore)
-	if err != nil {
-		return nil, err
+	if central != "" {
+		storeItems, err := loadItems(central, OriginStore)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, storeItems)
 	}
-	groups = append(groups, storeItems)
 
 	for _, ov := range overlays {
 		localItems, err := loadItems(ov, OriginLocal)

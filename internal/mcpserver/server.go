@@ -49,7 +49,8 @@ const noticeReserve = 640
 
 // Options configures the server.
 type Options struct {
-	// Root is the contour store's directory.
+	// Root is the central store's directory. Empty leaves the central store
+	// out of the session — a preset with central: false.
 	Root string
 
 	// Overlays are the project-local directories layered over the store, whose
@@ -163,7 +164,7 @@ func BuildInstructions(opts Options) (Instructions, error) {
 	if err != nil {
 		return Instructions{}, err
 	}
-	b.WriteString(MissingProfilesNotice(missing))
+	b.WriteString(MissingProfilesNotice(missing, opts.Root != ""))
 	if len(profiles) == 0 {
 		// Every profile the project asked for is missing. Serve the session as
 		// if none had been selected — local rules eager, the whole store on the
@@ -295,24 +296,38 @@ func joinBlocks(a, b string) string {
 	return strings.TrimRight(a, "\n") + "\n\n" + b
 }
 
-// MissingProfilesNotice tells the agent which of the project's profiles are not
-// in this machine's store, and so were not loaded. It renders as the empty
-// string when none are missing.
+// MissingProfilesNotice tells the agent which of the preset's profiles could not
+// be found, and so were not loaded. It renders as the empty string when none
+// are missing.
+//
+// centralUsed says whether the preset looks in the central store at all, and
+// changes what the notice says is wrong. With it, the profile is simply in
+// neither place, and the developer adds it. Without it — central: false — the
+// profile may well be in their store, but this preset is not allowed to use it,
+// so the fix is to make it a project profile; telling them it does not exist
+// would send them looking for the wrong problem.
 //
 // The agent is asked to pass it on because the developer is the only one who
 // can fix it, and nothing else would tell them: the session otherwise looks
 // healthy, just quietly missing some of the rules the project relies on. It
 // goes near the top of the instructions, where a client that caps them cannot
 // cut it.
-func MissingProfilesNotice(missing []string) string {
+func MissingProfilesNotice(missing []string, centralUsed bool) string {
 	if len(missing) == 0 {
 		return ""
 	}
+	names := strings.Join(missing, ", ")
+	n := len(missing)
+	if !centralUsed {
+		return fmt.Sprintf("NOTE: this preset uses the bootstrap %s %s, which %s not among this project's own profiles. "+
+			"The preset uses the project's local store only (central: false), so a profile from the central store "+
+			"is not loaded even if it exists there. Mention this to the user so they can add %s to the project.\n\n",
+			plural(n, "profile", "profiles"), names, plural(n, "is", "are"), plural(n, "it", "them"))
+	}
 	return fmt.Sprintf("NOTE: this project uses the bootstrap %s %s, which %s in neither the project nor this "+
 		"machine's contour store, so %s rules are not loaded. Mention this to the user so they can add %s.\n\n",
-		plural(len(missing), "profile", "profiles"), strings.Join(missing, ", "),
-		plural(len(missing), "is", "are"), plural(len(missing), "its", "their"),
-		plural(len(missing), "it", "them"))
+		plural(n, "profile", "profiles"), names, plural(n, "is", "are"),
+		plural(n, "its", "their"), plural(n, "it", "them"))
 }
 
 // intro opens the instructions. It states that the rules are binding before any

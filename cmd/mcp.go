@@ -62,6 +62,7 @@ var mcpCmd = &cobra.Command{
 			preset, _ = cfg.Select("")
 		}
 		mcpPreset = preset.Name
+		startSession(preset)
 
 		// --bootstrap, an escape hatch, replaces the preset's profiles and
 		// leaves the rest of the preset in force.
@@ -79,9 +80,10 @@ var mcpCmd = &cobra.Command{
 		}
 		// The agent is told about missing profiles in its instructions; this is
 		// for whoever reads the server's log.
-		if _, missing, err := bootstrap.LoadAvailable(profileSources(home.Path, overlays), profiles); err == nil && len(missing) > 0 {
-			fmt.Fprintf(os.Stderr, "contour: profile(s) in neither the project nor your store, serving without them: %s\n",
-				strings.Join(missing, ", "))
+		central := presetCentral(home.Path, preset)
+		if _, missing, err := bootstrap.LoadAvailable(profileSources(central, overlays), profiles); err == nil && len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "contour: profile(s) not found for preset %q, serving without them: %s\n",
+				preset.Name, strings.Join(missing, ", "))
 		}
 
 		// Open the session's usage log, if enabled. It is best-effort: a failure
@@ -101,7 +103,7 @@ var mcpCmd = &cobra.Command{
 			summaries = append(summaries, mcpserver.PresetSummary{Name: p.Name, Description: p.Description})
 		}
 		instructions, err := mcpserver.BuildInstructions(mcpserver.Options{
-			Root:          home.Path,
+			Root:          central,
 			Overlays:      overlays,
 			EagerFiles:    preset.EagerFiles,
 			Profiles:      profiles,

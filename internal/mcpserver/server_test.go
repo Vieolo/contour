@@ -87,13 +87,13 @@ func TestBuildInstructionsWithEveryProfileMissing(t *testing.T) {
 }
 
 func TestMissingProfilesNotice(t *testing.T) {
-	if got := MissingProfilesNotice(nil); got != "" {
+	if got := MissingProfilesNotice(nil, true); got != "" {
 		t.Errorf("notice for nothing missing = %q, want empty", got)
 	}
-	if got := MissingProfilesNotice([]string{"go"}); !strings.Contains(got, "profile go, which is in neither") {
+	if got := MissingProfilesNotice([]string{"go"}, true); !strings.Contains(got, "profile go, which is in neither") {
 		t.Errorf("singular notice reads badly: %q", got)
 	}
-	if got := MissingProfilesNotice([]string{"go", "cli"}); !strings.Contains(got, "profiles go, cli, which are in neither") {
+	if got := MissingProfilesNotice([]string{"go", "cli"}, true); !strings.Contains(got, "profiles go, cli, which are in neither") {
 		t.Errorf("plural notice reads badly: %q", got)
 	}
 }
@@ -228,5 +228,44 @@ func TestBuildInstructionsSeparatesRulesFromMenus(t *testing.T) {
 	}
 	if !strings.Contains(got.Text, "Use the project logger.\n\n# Available rules") {
 		t.Errorf("the menu heading runs into the last rule:\n%s", got.Text)
+	}
+}
+
+// With the central store left out (central: false), nothing of it reaches the
+// session — no rule, no menu line — and a central profile the preset names is
+// reported in words that point at the real fix: this preset cannot use it.
+func TestBuildInstructionsWithoutTheCentralStore(t *testing.T) {
+	_, overlay := storeWithLocalRule(t) // the central store exists, and is left out
+	writeFile(t, overlay, "bootstrap/team.md", "---\nrules: [team]\n---\nTeam preamble.")
+	writeFile(t, overlay, "rules/team/010-review.md", "Two approvals before merging.")
+
+	got, err := BuildInstructions(Options{
+		Root:     "", // central: false
+		Overlays: []string{overlay},
+		Profiles: []string{"team", "python"},
+	})
+	if err != nil {
+		t.Fatalf("BuildInstructions: %v", err)
+	}
+	for _, want := range []string{"Team preamble.", "Two approvals before merging.", "Use the project logger.",
+		"not among this project's own profiles", "central: false"} {
+		if !strings.Contains(got.Text, want) {
+			t.Errorf("instructions lack %q:\n%s", want, got.Text)
+		}
+	}
+	if strings.Contains(got.Text, "Wrap errors.") || strings.Contains(got.Text, "rules/python/010-errors") {
+		t.Errorf("central content reached a session that leaves the central store out:\n%s", got.Text)
+	}
+}
+
+func TestMissingProfilesNoticeWithoutTheCentralStore(t *testing.T) {
+	got := MissingProfilesNotice([]string{"python"}, false)
+	for _, want := range []string{"profile python, which is not among this project's own profiles", "add it to the project"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "in neither") {
+		t.Errorf("the local-only notice claims the profile does not exist: %q", got)
 	}
 }

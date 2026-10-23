@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -270,34 +269,34 @@ func isTerminal(f *os.File) bool {
 }
 
 // warnMissingProfiles tells a developer which of the profiles the project's
-// presets use are missing from their store. The config came from the team, but
-// the store is this machine's; saying so at setup beats discovering it from a
-// session that quietly lacks some rules.
+// presets use cannot be found. The config came from the team, but the store is
+// this machine's; saying so at setup beats discovering it from a session that
+// quietly lacks some rules. Each preset is checked against what it may use, so
+// a central: false preset naming a central profile is caught too.
 func warnMissingProfiles(cfg project.Config) {
-	var names []string
-	for _, p := range cfg.Presets {
-		names = append(names, p.Bootstrap...)
-	}
-	if len(names) == 0 {
-		return
-	}
 	home, err := resolveStore()
 	if err != nil {
 		return
 	}
-	_, missing, err := bootstrap.LoadAvailable(profileSources(home.Path, cwdOverlays()), slices.Compact(sortedCopy(names)))
-	if err != nil || len(missing) == 0 {
+	overlays := cwdOverlays()
+
+	var missing []string
+	for _, p := range cfg.Presets {
+		_, m, err := bootstrap.LoadAvailable(profileSources(presetCentral(home.Path, p), overlays), p.Bootstrap)
+		if err != nil {
+			return
+		}
+		for _, name := range m {
+			missing = append(missing, fmt.Sprintf("%s (preset %s)", name, p.Name))
+		}
+	}
+	if len(missing) == 0 {
 		return
 	}
-	termange.PrintWarningf("\nThis project's presets use profiles found in neither the project nor your store: %s\n"+
-		"Sessions will start without their rules until you add them (%s bootstrap lists yours).\n",
+	termange.PrintWarningf("\nThese profiles cannot be found for the presets that use them: %s\n"+
+		"Sessions will start without their rules. A preset with central: false can use only the project's own "+
+		"profiles; any other needs the profile in the project or your store (%s bootstrap lists yours).\n",
 		strings.Join(missing, ", "), config.Program)
-}
-
-func sortedCopy(s []string) []string {
-	out := slices.Clone(s)
-	slices.Sort(out)
-	return out
 }
 
 // checkProfilesExist rejects an unknown profile now rather than leaving the
