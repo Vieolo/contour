@@ -1,6 +1,7 @@
 // Package project reads a project's contour config: its presets — named
-// starting points for an agent session, each choosing the central profiles and
-// project files to load eagerly.
+// starting points for an agent session. Each says what a session starts with
+// (profiles, files, how much of the project's own store) and what it may reach
+// at all (whether your central store is in play).
 //
 // The config lives at the project root, not inside an overlay folder, for the
 // same reason the machine-wide config lives outside the store: settings must not
@@ -52,37 +53,48 @@ const (
 	DefaultPreset = "default"
 )
 
-// LocalMode says which items from the project's local store a preset includes.
+// LocalMode says which of the project's own items a session starts with — the
+// value of startup.local_store.
 type LocalMode string
 
 const (
-	// LocalAll includes every local item: local rules load eagerly, and local
-	// skills and knowledge join the menu. Being local is scope enough.
+	// LocalAll starts with every project item: local rules load eagerly, and
+	// local skills and knowledge join the menu. Being local is scope enough.
 	LocalAll LocalMode = "all"
 
-	// LocalSelected includes only the local items the preset's profiles select
-	// by tag, as central items are; the rest stay reachable through list,
-	// search and get.
+	// LocalSelected starts with only the project items the preset's profiles
+	// select by tag, as central items are. The rest stay reachable through
+	// list, search and get: this governs what a session starts with, not what
+	// it can reach.
 	LocalSelected LocalMode = "selected"
 )
 
 // Preset is a named starting point for an agent session in this project.
+//
+// Its fields mirror the config's two groups. startup is what a session begins
+// with; access is what it may reach at all. The split is real, not cosmetic:
+// the project's own items are always reachable, so there is a startup setting
+// for them but no access one, while the central store can be put out of reach
+// entirely. Field names follow the config's leaf names, so startup.local_store
+// greps to LocalStore.
 type Preset struct {
 	Name        string
 	Description string
 
-	// Bootstrap lists the profiles to load eagerly, in the order they compose.
-	Bootstrap []string
+	// Profiles (startup.profiles) load eagerly, in the order they compose.
+	Profiles []string
 
-	// EagerFiles are project files loaded eagerly as local rules, resolved to
-	// absolute paths.
-	EagerFiles []store.EagerFile
+	// Files (startup.files) are project files loaded eagerly as local rules,
+	// resolved to absolute paths.
+	Files []store.EagerFile
 
-	// Local says which local items the preset includes. Never empty once loaded.
-	Local LocalMode
+	// LocalStore (startup.local_store) says which project items the session
+	// starts with. Never empty once loaded.
+	LocalStore LocalMode
 
-	// Central reports whether the preset uses the central store at all.
-	Central bool
+	// CentralStore (access.central_store) reports whether the preset may use
+	// the central store at all.
+	CentralStore bool
 }
 
 // Config is a project's contour config.
@@ -126,7 +138,7 @@ func (c Config) Select(name string) (Preset, bool) {
 	if p, ok := c.Preset(name); ok {
 		return p, true
 	}
-	return Preset{Name: name, Local: LocalAll, Central: true}, false
+	return Preset{Name: name, LocalStore: LocalAll, CentralStore: true}, false
 }
 
 // Names returns the presets' names in file order.
@@ -165,22 +177,39 @@ var hosts = []host{{
 
 // presetFile is the YAML schema of one preset.
 type presetFile struct {
-	Description string       `yaml:"description"`
-	Bootstrap   profileNames `yaml:"bootstrap"`
-	EagerFiles  []string     `yaml:"eager_files"`
-	Local       string       `yaml:"local"`
-	Central     *bool        `yaml:"central"`
+	Description string      `yaml:"description"`
+	Startup     startupFile `yaml:"startup"`
+	Access      accessFile  `yaml:"access"`
+}
+
+type startupFile struct {
+	Profiles   profileNames `yaml:"profiles"`
+	Files      []string     `yaml:"files"`
+	LocalStore string       `yaml:"local_store"`
+}
+
+type accessFile struct {
+	CentralStore *bool `yaml:"central_store"`
+}
+
+// legacyFile is the 0.2 config: one implicit preset, its settings at the top
+// level. It is read only to migrate it.
+type legacyFile struct {
+	Bootstrap  profileNames `yaml:"bootstrap"`
+	EagerFiles []string     `yaml:"eager_files"`
 }
 
 // Keys contour recognises, so a typo is reported instead of silently ignored —
-// `eager_file:` would otherwise leave a preset quietly loading nothing.
+// `file:` would otherwise leave a preset quietly loading nothing.
 var (
-	rootKeys   = []string{"presets"}
-	legacyKeys = []string{"bootstrap", "eager_files"}
-	presetKeys = []string{"description", "bootstrap", "eager_files", "local", "central"}
+	rootKeys    = []string{"presets"}
+	legacyKeys  = []string{"bootstrap", "eager_files"}
+	presetKeys  = []string{"description", "startup", "access"}
+	startupKeys = []string{"profiles", "files", "local_store"}
+	accessKeys  = []string{"central_store"}
 )
 
-// profileNames accepts the bootstrap key as either a single name or a list of
+// profileNames accepts a profile list as either a single name or a list of
 // them, so the common single-profile case need not be a one-element list.
 type profileNames []string
 
@@ -199,7 +228,7 @@ func (n *profileNames) UnmarshalYAML(node *yaml.Node) error {
 		}
 		*n = many
 	default:
-		return fmt.Errorf("bootstrap must be a profile name or a list of profile names")
+		return fmt.Errorf("profiles must be a profile name or a list of profile names")
 	}
 	return nil
 }
@@ -287,12 +316,12 @@ func Load(projectDir string) (Config, error) {
 // did and the message to show the user either way.
 func migrate(path string, presets []Preset, write func(*yaml.Node) error) (bool, string) {
 	def := presets[0] // a legacy config migrates to exactly one: the default
-	ids := make([]string, 0, len(def.EagerFiles))
-	for _, f := range def.EagerFiles {
+	ids := make([]string, 0, len(def.Files))
+	for _, f := range def.Files {
 		ids = append(ids, f.ID)
 	}
 
-	body, err := bodyNode(def.Bootstrap, ids)
+	body, err := bodyNode(def.Profiles, ids)
 	if err == nil {
 		err = write(body)
 	}
@@ -300,8 +329,8 @@ func migrate(path string, presets []Preset, write func(*yaml.Node) error) (bool,
 		return false, fmt.Sprintf("%s uses the old config shape and could not be migrated (%v); "+
 			"using its settings as the default preset for now", path, err)
 	}
-	return true, fmt.Sprintf("migrated %s to presets: its bootstrap and eager_files are now the default preset — "+
-		"review the change and commit it", path)
+	return true, fmt.Sprintf("migrated %s to presets: its bootstrap and eager_files are now the default preset's "+
+		"startup.profiles and startup.files — review the change and commit it", path)
 }
 
 // parse reads a config body: a mapping holding presets, or, in a config written
@@ -329,15 +358,17 @@ func parse(projectDir string, body *yaml.Node) (presets []Preset, legacy bool, w
 			"move those into presets.default")
 
 	case hasLegacy:
-		var p presetFile
-		if err := body.Decode(&p); err != nil {
+		var l legacyFile
+		if err := body.Decode(&l); err != nil {
 			return nil, false, nil, err
 		}
-		preset, err := presetFrom(projectDir, DefaultPreset, p)
-		if err != nil {
-			return nil, false, nil, err
-		}
-		return []Preset{preset}, true, nil, nil
+		return []Preset{{
+			Name:         DefaultPreset,
+			Profiles:     cleanNames(l.Bootstrap),
+			Files:        resolveEagerFiles(projectDir, l.EagerFiles),
+			LocalStore:   LocalAll,
+			CentralStore: true,
+		}}, true, nil, nil
 	}
 
 	warnings = unknownKeys(body, rootKeys, "")
@@ -357,7 +388,11 @@ func parse(projectDir string, body *yaml.Node) (presets []Preset, legacy bool, w
 		if value.Kind != yaml.MappingNode {
 			return nil, false, nil, fmt.Errorf("preset %q must be a mapping", name)
 		}
-		warnings = append(warnings, unknownKeys(value, presetKeys, "preset "+name+": ")...)
+		w, err := presetKeyWarnings(name, value)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		warnings = append(warnings, w...)
 
 		var p presetFile
 		if err := value.Decode(&p); err != nil {
@@ -373,28 +408,52 @@ func parse(projectDir string, body *yaml.Node) (presets []Preset, legacy bool, w
 }
 
 func presetFrom(projectDir, name string, p presetFile) (Preset, error) {
-	local := LocalMode(strings.TrimSpace(p.Local))
+	local := LocalMode(strings.TrimSpace(p.Startup.LocalStore))
 	switch local {
 	case "":
 		local = LocalAll
 	case LocalAll, LocalSelected:
 	default:
-		return Preset{}, fmt.Errorf("preset %q: local must be %q or %q, not %q", name, LocalAll, LocalSelected, p.Local)
+		return Preset{}, fmt.Errorf("preset %q: startup.local_store must be %q or %q, not %q",
+			name, LocalAll, LocalSelected, p.Startup.LocalStore)
 	}
 
 	central := true
-	if p.Central != nil {
-		central = *p.Central
+	if p.Access.CentralStore != nil {
+		central = *p.Access.CentralStore
 	}
 
 	return Preset{
-		Name:        name,
-		Description: strings.TrimSpace(p.Description),
-		Bootstrap:   cleanNames(p.Bootstrap),
-		EagerFiles:  resolveEagerFiles(projectDir, p.EagerFiles),
-		Local:       local,
-		Central:     central,
+		Name:         name,
+		Description:  strings.TrimSpace(p.Description),
+		Profiles:     cleanNames(p.Startup.Profiles),
+		Files:        resolveEagerFiles(projectDir, p.Startup.Files),
+		LocalStore:   local,
+		CentralStore: central,
 	}, nil
+}
+
+// presetKeyWarnings reports the keys contour does not recognise in a preset and
+// in its startup and access groups. A group that is present but is not a
+// mapping is an error: its settings would otherwise vanish without a word.
+func presetKeyWarnings(name string, preset *yaml.Node) ([]string, error) {
+	prefix := "preset " + name + ": "
+	warnings := unknownKeys(preset, presetKeys, prefix)
+	for _, group := range []struct {
+		key   string
+		known []string
+	}{{"startup", startupKeys}, {"access", accessKeys}} {
+		node := mappingValue(preset, group.key)
+		switch {
+		case node == nil || (node.Kind == yaml.ScalarNode && node.Tag == "!!null"):
+			// absent, or present and empty: every setting takes its default
+		case node.Kind != yaml.MappingNode:
+			return nil, fmt.Errorf("preset %q: %s must be a mapping", name, group.key)
+		default:
+			warnings = append(warnings, unknownKeys(node, group.known, prefix+group.key+": ")...)
+		}
+	}
+	return warnings, nil
 }
 
 // unknownKeys warns about the keys of a mapping contour does not recognise.
@@ -546,7 +605,7 @@ func Ensure(projectDir string, bootstrap, eagerFiles []string) (Config, bool, er
 
 	if cfg.Path != "" {
 		def, _ := cfg.Preset(DefaultPreset)
-		if requested := cleanNames(bootstrap); len(requested) > 0 && !slices.Equal(requested, def.Bootstrap) {
+		if requested := cleanNames(bootstrap); len(requested) > 0 && !slices.Equal(requested, def.Profiles) {
 			return cfg, false, ErrProfileConflict
 		}
 		return cfg, false, nil
@@ -613,20 +672,22 @@ func bodyNode(bootstrap, eagerFiles []string) (*yaml.Node, error) {
 
 // renderBody renders a config holding a single default preset.
 //
-// The local and central fields are written commented out, with their values
+// Settings left at their defaults are written commented out, with their values
 // explained: a generated config should teach every field it can hold, and
 // leaving them commented keeps the defaults in force until someone decides
-// otherwise. The example of a second preset sits in the comment above presets:
-// yaml.v3 drops a comment trailing the last key of a mapping, so placed there
-// it would vanish from go.yaml.
-func renderBody(bootstrap, eagerFiles []string) string {
+// otherwise. The whole access group is commented out, since everything in it
+// is a default — an access key holding nothing but comments is the shape most
+// likely to lose them on a rewrite. The example of a second preset sits in the
+// comment above presets for the same reason: yaml.v3 drops a comment trailing
+// the end of the document, so placed there it would vanish from go.yaml.
+func renderBody(profiles, files []string) string {
 	var b strings.Builder
 
 	b.WriteString(`# presets: named starting points for an agent session in this project. Each
-#   one names the profiles and project files that load eagerly. "default" is
-#   loaded when a session starts; ask the agent to load any other, or start
-#   with it by passing --preset <name> to "contour mcp". A preset inherits
-#   nothing from default: each lists everything it needs.
+#   one says what a session starts with (startup) and what it may reach at all
+#   (access). "default" is loaded when a session starts; ask the agent to load
+#   any other, or start with it by passing --preset <name> to "contour mcp".
+#   A preset inherits nothing from default: each lists everything it needs.
 #
 #   In a project with several unrelated parts — a monorepo, say — keep default
 #   light: it is always loaded, so give it only what every session needs, and
@@ -634,36 +695,49 @@ func renderBody(bootstrap, eagerFiles []string) string {
 #
 #     frontend:
 #       description: The React app (shown when the agent lists the presets)
-#       bootstrap: [react]
-#       eager_files: [frontend/AGENTS.md]
+#       startup:
+#         profiles: [react]
+#         files: [frontend/AGENTS.md]
 presets:
   default:
-    # bootstrap: profiles whose rules load eagerly. List several to combine
-    #   them — [python, cli] — in the order they compose.
+    # startup: what a session with this preset starts with.
+    startup:
+      # profiles: whose rules load eagerly, and whose skills and knowledge are
+      #   listed for the agent to fetch. List several to combine them —
+      #   [python, cli] — in the order they compose. Looked up in this project
+      #   first, then your central store.
 `)
-	fmt.Fprintf(&b, "    bootstrap: [%s]\n", strings.Join(cleanNames(bootstrap), ", "))
-	b.WriteString(`    # eager_files: project files loaded eagerly as rules, paths relative to the
-    #   project root. Keep a CLAUDE.md or AGENTS.md without restructuring it.
+	fmt.Fprintf(&b, "      profiles: [%s]\n", strings.Join(cleanNames(profiles), ", "))
+	// local_store is documented above files, as part of files' head comment,
+	// not after it: yaml.v3 attaches a comment that follows a block list to
+	// the list's last item and re-indents it to match, so placed after a
+	// non-empty files list it would land inside the list.
+	b.WriteString(`      # local_store: which of this project's own items (in .agents/, .contour/
+      #   or .claude/) the session starts with. Whichever you pick, all of them
+      #   stay reachable through the list, search and get tools.
+      #     all        every one; local rules load eagerly (the default)
+      #     selected   only those the profiles above select by tag
+      # local_store: all
+      #
+      # files: project files loaded eagerly as rules, paths relative to the
+      #   project root. Keep a CLAUDE.md or AGENTS.md without restructuring it.
 `)
-	if len(eagerFiles) == 0 {
-		b.WriteString("    eager_files: []\n")
+	if len(files) == 0 {
+		b.WriteString("      files: []\n")
 	} else {
-		b.WriteString("    eager_files:\n")
-		for _, f := range eagerFiles {
-			fmt.Fprintf(&b, "      - %s\n", f)
+		b.WriteString("      files:\n")
+		for _, f := range files {
+			fmt.Fprintf(&b, "        - %s\n", f)
 		}
 	}
-	b.WriteString(`    # local: which items from this project's local store (.agents/, .contour/
-    #   or .claude/) the preset includes.
-    #     all        every local item; local rules load eagerly (the default)
-    #     selected   only those the profiles above select by tag; the rest
-    #                stay reachable through the list, search and get tools
-    # local: all
-    # central: whether the preset uses your central store at all.
+	b.WriteString(`    # access: what a session with this preset may reach at all.
+    #   central_store: whether it uses your central store.
     #     true       yes (the default)
-    #     false      this project's local store only, which keeps a
-    #                developer's personal store out of the session
-    # central: true
+    #     false      this project's local store only: none of your central
+    #                store reaches the session, which keeps a developer's
+    #                personal store out of it
+    # access:
+    #   central_store: true
 `)
 	return b.String()
 }

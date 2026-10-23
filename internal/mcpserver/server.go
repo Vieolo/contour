@@ -50,7 +50,7 @@ const noticeReserve = 640
 // Options configures the server.
 type Options struct {
 	// Root is the central store's directory. Empty leaves the central store
-	// out of the session — a preset with central: false.
+	// out of the session — a preset with access.central_store: false.
 	Root string
 
 	// Overlays are the project-local directories layered over the store, whose
@@ -68,7 +68,7 @@ type Options struct {
 	Profiles []string
 
 	// SelectedLocal offers only the project items the profiles select, plus
-	// the eager files — a preset's `local: selected`. The zero value includes
+	// the eager files — a preset's `startup.local_store: selected`. The zero value includes
 	// every project item, the default, so a caller that never heard of the
 	// setting cannot drop a project's rules by leaving it out.
 	SelectedLocal bool
@@ -238,7 +238,7 @@ func presetsSection(current string, presets []PresetSummary) string {
 // Menus go first when space runs short: the list tool reproduces them on demand,
 // whereas a local rule body has no other eager route to the agent.
 func noProfileInstructions(head string, st *store.Store, allLocal bool) Instructions {
-	// The project's rules are eager — all of them, or under local: selected
+	// The project's rules are eager — all of them, or under startup.local_store: selected
 	// only the files the config names, since with no profile nothing else is
 	// selected.
 	var localRules []store.Item
@@ -302,7 +302,7 @@ func joinBlocks(a, b string) string {
 //
 // centralUsed says whether the preset looks in the central store at all, and
 // changes what the notice says is wrong. With it, the profile is simply in
-// neither place, and the developer adds it. Without it — central: false — the
+// neither place, and the developer adds it. Without it — access.central_store: false — the
 // profile may well be in their store, but this preset is not allowed to use it,
 // so the fix is to make it a project profile; telling them it does not exist
 // would send them looking for the wrong problem.
@@ -320,7 +320,7 @@ func MissingProfilesNotice(missing []string, centralUsed bool) string {
 	n := len(missing)
 	if !centralUsed {
 		return fmt.Sprintf("NOTE: this preset uses the bootstrap %s %s, which %s not among this project's own profiles. "+
-			"The preset uses the project's local store only (central: false), so a profile from the central store "+
+			"The preset uses the project's local store only (access.central_store: false), so a profile from the central store "+
 			"is not loaded even if it exists there. Mention this to the user so they can add %s to the project.\n\n",
 			plural(n, "profile", "profiles"), names, plural(n, "is", "are"), plural(n, "it", "them"))
 	}

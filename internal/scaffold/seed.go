@@ -37,9 +37,9 @@ merges it over your central store whenever it runs in this project.
     knowledge/   Listed on the menu, fetched when relevant.
 
 By default everything here is live — no tags or profiles needed, being in this
-project is scope enough. A preset can instead set "local: selected" and take
-only what its profiles select by tag; folder names are tags, so
-rules/frontend/ is tagged "frontend". Where a local item conflicts with one
+project is scope enough. A preset can instead set startup.local_store to
+"selected" and take only what its profiles select by tag; folder names are
+tags, so rules/frontend/ is tagged "frontend". Where a local item conflicts with one
 from your central store, the local one wins, and contour tells the agent so.
 
 ## Profiles
@@ -54,7 +54,8 @@ of a central profile with the same name in this project:
     ---
 
 Committed with the project, it means the same thing on every machine, whatever
-each developer's own store holds. Name it from a preset in the project config.
+each developer's own store holds. Name it in a preset's startup.profiles in the
+project config.
 
 ## Formats
 

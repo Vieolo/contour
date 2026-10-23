@@ -66,7 +66,7 @@ var mcpCmd = &cobra.Command{
 
 		// --bootstrap, an escape hatch, replaces the preset's profiles and
 		// leaves the rest of the preset in force.
-		profiles := preset.Bootstrap
+		profiles := preset.Profiles
 		if len(mcpBootstrap) > 0 {
 			profiles = mcpBootstrap
 		}
@@ -105,9 +105,9 @@ var mcpCmd = &cobra.Command{
 		instructions, err := mcpserver.BuildInstructions(mcpserver.Options{
 			Root:          central,
 			Overlays:      overlays,
-			EagerFiles:    preset.EagerFiles,
+			EagerFiles:    preset.Files,
 			Profiles:      profiles,
-			SelectedLocal: preset.Local == project.LocalSelected,
+			SelectedLocal: preset.LocalStore == project.LocalSelected,
 			Notices:       notices,
 			Preset:        preset.Name,
 			Presets:       summaries,

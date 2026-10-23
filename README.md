@@ -343,7 +343,8 @@ or, in a preset of the project config (see [Presets](#presets)):
 ```yaml
 presets:
   default:
-    bootstrap: [python, cli]
+    startup:
+      profiles: [python, cli]
 ```
 
 They compose exactly the way tags inside a single profile already do — the
@@ -387,7 +388,7 @@ my-project/
 
 Three folder names, because teams already keep agent context in different places; contour reads whichever you use (and unions them if you have more than one). It only looks at the `bootstrap/`, `rules/`, `skills/` and `knowledge/` inside — anything else in the folder is left alone, so it sits happily beside another tool's config.
 
-By default, project items are **always active**: local rules load eagerly, local skills and knowledge join the on-demand menu, no tags needed — being local is scope enough. A preset can instead take only the project items its profiles select (`local: selected`), which is how a large project gives each of its parts just its own context; see [Presets](#presets). Folder names are tags here, just as in the central store.
+By default, project items are **always active**: local rules load eagerly, local skills and knowledge join the on-demand menu, no tags needed — being local is scope enough. A preset can instead start with only the project items its profiles select (`startup.local_store: selected`), which is how a large project gives each of its parts just its own context; see [Presets](#presets). Folder names are tags here, just as in the central store.
 
 To start one, run this from the project root:
 
@@ -438,33 +439,40 @@ This is the on-ramp, too. Start with everything local — a `CLAUDE.md` and a fe
 
 ## Presets
 
-A project's contour config is a set of **presets**: named starting points for an agent session, each saying which profiles and which project files load eagerly.
+A project's contour config is a set of **presets**: named starting points for an agent session. Each says two things — what a session **starts with**, and what it may **reach** at all:
 
 ```yaml
 # .contour.yaml   (at the project root)
 presets:
   default:
-    bootstrap: [python, cli]
-    eager_files: [AGENTS.md]
+    startup:
+      profiles: [python, cli]
+      files: [AGENTS.md]
   docs:
     description: Writing and reviewing the docs site
-    bootstrap: [writing]
-    eager_files: [AGENTS.md, docs/STYLE.md]
+    startup:
+      profiles: [writing]
+      files: [AGENTS.md, docs/STYLE.md]
+      local_store: selected
+    access:
+      central_store: false
 ```
 
 | Field | Purpose |
 |---|---|
 | `description` | Shown to the agent when it lists the presets it can load. |
-| `bootstrap` | Profiles whose rules load eagerly — one name or a list, composed in order. Looked up in the project first, then your central store. |
-| `eager_files` | Project files loaded eagerly as rules, paths relative to the project root. |
-| `local` | `all` (the default) includes every project item. `selected` includes only those the profiles select; the rest stay reachable through `list`, `search` and `get`. Files in `eager_files` are delivered either way. |
-| `central` | `true` (the default) uses your central store. `false` uses only the project's local store. |
+| `startup.profiles` | Profiles whose rules load eagerly, and whose skills and knowledge are listed for the agent to fetch — one name or a list, composed in order. Looked up in the project first, then your central store. |
+| `startup.files` | Project files loaded eagerly as rules, paths relative to the project root. |
+| `startup.local_store` | Which of the project's own items the session starts with. `all` (the default): every one. `selected`: only those the profiles select. Either way, all of them stay reachable through `list`, `search` and `get`, and `startup.files` are delivered. |
+| `access.central_store` | Whether the session may use your central store at all. `true` (the default), or `false` for the project's local store only. |
 
-A session starts with `default` — the one reserved name. Every preset stands on its own: nothing is inherited from `default`, so each lists everything it needs. `contour mcp-init` writes a config with a `default` preset, and documents `local` and `central` in it as comments.
+The two groups are not a matching pair, and the difference is deliberate. The project's own items are always reachable, so there is a `startup` setting for them but no `access` one; your central store can be put out of reach entirely, which also keeps it out of the startup.
+
+A session starts with `default` — the one reserved name. Every preset stands on its own: nothing is inherited from `default`, so each lists everything it needs. `contour mcp-init` writes a config with a `default` preset, and documents `local_store` and `central_store` in it as comments.
 
 ### Single files (CLAUDE.md, AGENTS.md)
 
-If you already keep a `CLAUDE.md` or `AGENTS.md`, you don't have to restructure it: list it in a preset's `eager_files` and it loads eagerly as a project rule. `contour mcp-init` detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
+If you already keep a `CLAUDE.md` or `AGENTS.md`, you don't have to restructure it: list it in a preset's `startup.files` and it loads eagerly as a project rule. `contour mcp-init` detects a root `AGENTS.md`/`CLAUDE.md` automatically. Only listed files load — contour never slurps a file it merely finds.
 
 ### Switching presets
 
@@ -482,32 +490,34 @@ A preset name the config does not define falls back to `default`, and the agent 
 ```yaml
 presets:
   default:
-    bootstrap: []
-    eager_files: [AGENTS.md]
-    local: selected
+    startup:
+      files: [AGENTS.md]
+      local_store: selected
   frontend:
     description: The React app
-    bootstrap: [frontend]
-    eager_files: [AGENTS.md, frontend/AGENTS.md]
-    local: selected
+    startup:
+      profiles: [frontend]
+      files: [AGENTS.md, frontend/AGENTS.md]
+      local_store: selected
   backend:
     description: The Go API
-    bootstrap: [backend]
-    eager_files: [AGENTS.md, backend/AGENTS.md]
-    local: selected
+    startup:
+      profiles: [backend]
+      files: [AGENTS.md, backend/AGENTS.md]
+      local_store: selected
 ```
 
-With the project's context in one local store — `.agents/rules/frontend/`, `.agents/rules/backend/` — and a [project profile](#project-profiles) per part, `local: selected` gives each preset only its own part. A session starts with the repo-wide `AGENTS.md` and the list of presets; "load the frontend preset" adds the frontend's rules and skills, and nothing of the backend's. Nothing is out of reach, either: presets decide what is *offered*, never what can be *found*. `list`, `search` and `get` reach every part of the project, other presets' eager files included.
+With the project's context in one local store — `.agents/rules/frontend/`, `.agents/rules/backend/` — and a [project profile](#project-profiles) per part, `local_store: selected` gives each preset only its own part. A session starts with the repo-wide `AGENTS.md` and the list of presets; "load the frontend preset" adds the frontend's rules and skills, and nothing of the backend's. Nothing is out of reach, either: presets decide what is *offered*, never what can be *found*. `list`, `search` and `get` reach every part of the project, other presets' eager files included.
 
 Loading cannot take anything away, so moving from one part to another means starting a new session.
 
-One thing to watch under `local: selected`: a project item no profile selects is only reachable by search. To keep a repo-wide rule eager, list it in `eager_files` or give it a tag a profile selects. `contour list --profiles` shows anything nothing offers.
+One thing to watch under `local_store: selected`: a project item no profile selects is only reachable by search. To keep a repo-wide rule eager, list it in `startup.files` or give it a tag a profile selects. `contour list --profiles` shows anything nothing offers.
 
 ### Keeping your own store out
 
-`central: false` makes a preset use only the project's local store. None of the central store reaches the session — not its rules or profiles at the start, and not through `list`, `search` or `get` either. It is for teams that want an agent's context to come from the project alone, without each developer's personal store mixed in. Such a preset can only use the project's own profiles.
+`access.central_store: false` makes a preset use only the project's local store. None of the central store reaches the session — not its rules or profiles at the start, and not through `list`, `search` or `get` either. It is for teams that want an agent's context to come from the project alone, without each developer's personal store mixed in. Such a preset can only use the project's own profiles.
 
-Two limits worth knowing. It governs what *contour* gives an agent: a developer's `~/.claude/CLAUDE.md` and their other MCP servers still apply. And presets are yours to combine: load a preset that uses the central store into a `central: false` session, and the session's tools can reach the central store from then on. Your own terminal is never scoped — `contour list` and `search` always show your whole store, which is how you curate it.
+Two limits worth knowing. It governs what *contour* gives an agent: a developer's `~/.claude/CLAUDE.md` and their other MCP servers still apply. And presets are yours to combine: load a preset that uses the central store into a `central_store: false` session, and the session's tools can reach the central store from then on. Your own terminal is never scoped — `contour list` and `search` always show your whole store, which is how you curate it.
 
 ### Where the config lives
 
@@ -526,8 +536,9 @@ external:
   contour:
     presets:
       default:
-        bootstrap: [python, cli]
-        eager_files: [AGENTS.md]
+        startup:
+          profiles: [python, cli]
+          files: [AGENTS.md]
 ```
 
 The fields are identical; only their location differs. `contour mcp-init` detects an existing `go.yaml` and writes there instead, leaving the rest of the file's settings — its metadata and other tools' sections — untouched.
@@ -561,7 +572,7 @@ So the precedence, in full:
 
 ### Upgrading from the old config
 
-Before presets, the config held `bootstrap` and `eager_files` at the top level. The first contour command run in such a project migrates it: those settings become the `default` preset, the file is rewritten in the new shape — documented like a freshly generated one — and contour says so, so you can review the change and commit it. What loads does not change.
+Before presets (contour 0.2), the config held `bootstrap` and `eager_files` at the top level. The first contour command run in such a project migrates it: those settings become the `default` preset's `startup.profiles` and `startup.files`, the file is rewritten in the new shape — documented like a freshly generated one — and contour says so, so you can review the change and commit it. What loads does not change.
 
 The migration runs on whichever command reads the config first, including the MCP server an agent starts. If the file cannot be written, the session runs on the migrated settings anyway, with a warning. A config holding both shapes at once is refused rather than guessed at. In a `go.yaml`, the rewrite also drops the file's blank lines, which the YAML library cannot preserve.
 
@@ -882,9 +893,9 @@ it a tag one of your profiles selects and it moves from available to offered.
 
 Project-local items need no profile by default — being local to the project is
 scope enough — so they show as always active, alongside any profiles that also
-select them. If every preset in the project uses `local: selected`, they get in
+select them. If every preset in the project uses `local_store: selected`, they get in
 only through profiles, and one that no profile selects is reported like any
-other item nothing offers. Files listed in `eager_files` are always active
+other item nothing offers. Files listed in `startup.files` are always active
 either way.
 
 It is a flag on `list` rather than a command of its own, so the same kind

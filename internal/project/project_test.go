@@ -57,15 +57,18 @@ func TestLoadReadsPresetsInFileOrder(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, FileName), `presets:
   default:
-    bootstrap: [general]
-    eager_files:
-      - AGENTS.md
+    startup:
+      profiles: [general]
+      files:
+        - AGENTS.md
   frontend:
     description: The React app
-    bootstrap: [general, react]
-    eager_files: [frontend/AGENTS.md]
-    local: selected
-    central: false
+    startup:
+      profiles: [general, react]
+      files: [frontend/AGENTS.md]
+      local_store: selected
+    access:
+      central_store: false
 `)
 
 	cfg, err := Load(dir)
@@ -77,31 +80,31 @@ func TestLoadReadsPresetsInFileOrder(t *testing.T) {
 	}
 
 	def := preset(t, cfg, "default")
-	if want := []string{"general"}; !reflect.DeepEqual(def.Bootstrap, want) {
-		t.Errorf("default.Bootstrap = %v, want %v", def.Bootstrap, want)
+	if want := []string{"general"}; !reflect.DeepEqual(def.Profiles, want) {
+		t.Errorf("default.Profiles = %v, want %v", def.Profiles, want)
 	}
-	if len(def.EagerFiles) != 1 || def.EagerFiles[0].ID != "AGENTS.md" ||
-		def.EagerFiles[0].Path != filepath.Join(dir, "AGENTS.md") {
-		t.Errorf("default.EagerFiles = %v, want AGENTS.md resolved against the project", def.EagerFiles)
+	if len(def.Files) != 1 || def.Files[0].ID != "AGENTS.md" ||
+		def.Files[0].Path != filepath.Join(dir, "AGENTS.md") {
+		t.Errorf("default.Files = %v, want AGENTS.md resolved against the project", def.Files)
 	}
 	// Unset settings take their defaults.
-	if def.Local != LocalAll || !def.Central {
-		t.Errorf("default settings = local %q central %v, want all/true", def.Local, def.Central)
+	if def.LocalStore != LocalAll || !def.CentralStore {
+		t.Errorf("default settings = local %q central %v, want all/true", def.LocalStore, def.CentralStore)
 	}
 
 	fe := preset(t, cfg, "frontend")
 	if fe.Description != "The React app" {
 		t.Errorf("frontend.Description = %q", fe.Description)
 	}
-	if fe.Local != LocalSelected || fe.Central {
-		t.Errorf("frontend settings = local %q central %v, want selected/false", fe.Local, fe.Central)
+	if fe.LocalStore != LocalSelected || fe.CentralStore {
+		t.Errorf("frontend settings = local %q central %v, want selected/false", fe.LocalStore, fe.CentralStore)
 	}
-	if want := filepath.Join(dir, "frontend", "AGENTS.md"); len(fe.EagerFiles) != 1 || fe.EagerFiles[0].Path != want {
-		t.Errorf("frontend.EagerFiles = %v, want %s", fe.EagerFiles, want)
+	if want := filepath.Join(dir, "frontend", "AGENTS.md"); len(fe.Files) != 1 || fe.Files[0].Path != want {
+		t.Errorf("frontend.Files = %v, want %s", fe.Files, want)
 	}
 }
 
-// A preset's bootstrap takes one name or a list; order counts and repeats drop.
+// startup.profiles takes one name or a list; order counts and repeats drop.
 func TestLoadReadsBootstrapShapes(t *testing.T) {
 	for _, tc := range []struct {
 		name, value string
@@ -109,19 +112,19 @@ func TestLoadReadsBootstrapShapes(t *testing.T) {
 	}{
 		{"scalar", "python", []string{"python"}},
 		{"flow", "[python, cli]", []string{"python", "cli"}},
-		{"block", "\n      - python\n      - cli", []string{"python", "cli"}},
+		{"block", "\n        - python\n        - cli", []string{"python", "cli"}},
 		{"dedup", "[python, cli, python]", []string{"python", "cli"}},
 		{"blanks", "[python, \"\", \"  cli \"]", []string{"python", "cli"}},
 		{"empty", "[]", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    bootstrap: "+tc.value+"\n")
+			write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    startup:\n      profiles: "+tc.value+"\n")
 			cfg, err := Load(dir)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if got := preset(t, cfg, DefaultPreset).Bootstrap; !reflect.DeepEqual(got, tc.want) {
+			if got := preset(t, cfg, DefaultPreset).Profiles; !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("Bootstrap = %v, want %v", got, tc.want)
 			}
 		})
@@ -130,8 +133,11 @@ func TestLoadReadsBootstrapShapes(t *testing.T) {
 
 func TestLoadRejectsInvalidPresets(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
-		{"mapping as bootstrap", "presets:\n  default:\n    bootstrap:\n      name: python\n"},
-		{"unknown local mode", "presets:\n  default:\n    local: some\n"},
+		{"mapping as profiles", "presets:\n  default:\n    startup:\n      profiles:\n        name: python\n"},
+		{"unknown local_store", "presets:\n  default:\n    startup:\n      local_store: some\n"},
+		{"central_store not a boolean", "presets:\n  default:\n    access:\n      central_store: nope\n"},
+		{"startup not a mapping", "presets:\n  default:\n    startup: [python]\n"},
+		{"access not a mapping", "presets:\n  default:\n    access: false\n"},
 		{"presets not a mapping", "presets: [default]\n"},
 		{"preset not a mapping", "presets:\n  default: python\n"},
 	} {
@@ -145,20 +151,53 @@ func TestLoadRejectsInvalidPresets(t *testing.T) {
 	}
 }
 
-// A typo in a key would otherwise leave a preset silently loading nothing.
+// A typo in a key would otherwise leave a preset silently loading nothing — at
+// any level: the root, a preset, or inside its startup and access groups.
 func TestLoadWarnsAboutUnknownKeys(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    eager_file: [AGENTS.md]\nprofile: x\n")
+	write(t, filepath.Join(dir, FileName), `presets:
+  default:
+    eager_files: [AGENTS.md]
+    startup:
+      file: [AGENTS.md]
+    access:
+      central: false
+profile: x
+`)
 
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	joined := strings.Join(cfg.Warnings, "\n")
-	for _, want := range []string{`preset default: unknown key "eager_file"`, `unknown key "profile"`} {
+	for _, want := range []string{
+		`preset default: unknown key "eager_files"`,
+		`preset default: startup: unknown key "file"`,
+		`preset default: access: unknown key "central"`,
+		`unknown key "profile"`,
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings lack %q:\n%s", want, joined)
 		}
+	}
+}
+
+// A startup or access group present but empty is not an error: its settings
+// take their defaults.
+func TestLoadAcceptsEmptyGroups(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    startup:\n    access:\n")
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	def := preset(t, cfg, DefaultPreset)
+	if def.LocalStore != LocalAll || !def.CentralStore || len(def.Profiles) != 0 {
+		t.Errorf("default = %+v, want no profiles with the default settings", def)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", cfg.Warnings)
 	}
 }
 
@@ -177,8 +216,8 @@ func TestLoadMissingConfigIsZero(t *testing.T) {
 // Central would read as false.
 func TestSelect(t *testing.T) {
 	cfg := Config{Presets: []Preset{
-		{Name: "default", Bootstrap: []string{"general"}, Local: LocalAll, Central: true},
-		{Name: "frontend", Bootstrap: []string{"react"}, Local: LocalSelected, Central: false},
+		{Name: "default", Profiles: []string{"general"}, LocalStore: LocalAll, CentralStore: true},
+		{Name: "frontend", Profiles: []string{"react"}, LocalStore: LocalSelected, CentralStore: false},
 	}}
 
 	if p, ok := cfg.Select(""); !ok || p.Name != "default" {
@@ -191,7 +230,7 @@ func TestSelect(t *testing.T) {
 	if ok {
 		t.Error("Select reported finding a preset in an empty config")
 	}
-	if p.Local != LocalAll || !p.Central || len(p.Bootstrap) != 0 {
+	if p.LocalStore != LocalAll || !p.CentralStore || len(p.Profiles) != 0 {
 		t.Errorf("blank preset = %+v, want no profiles with the default settings", p)
 	}
 }
@@ -219,11 +258,11 @@ func TestWriteRoundtripsAtProjectRoot(t *testing.T) {
 		t.Error("a freshly written config was treated as needing migration")
 	}
 	def := preset(t, cfg, DefaultPreset)
-	if want := []string{"python"}; !reflect.DeepEqual(def.Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v", def.Bootstrap, want)
+	if want := []string{"python"}; !reflect.DeepEqual(def.Profiles, want) {
+		t.Errorf("Bootstrap = %v, want %v", def.Profiles, want)
 	}
-	if len(def.EagerFiles) != 1 || def.EagerFiles[0].ID != "AGENTS.md" {
-		t.Errorf("EagerFiles = %v, want [AGENTS.md]", def.EagerFiles)
+	if len(def.Files) != 1 || def.Files[0].ID != "AGENTS.md" {
+		t.Errorf("EagerFiles = %v, want [AGENTS.md]", def.Files)
 	}
 }
 
@@ -239,16 +278,18 @@ func TestWriteRoundtripsProfileCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load after Write(%v): %v", want, err)
 		}
-		if got := preset(t, cfg, DefaultPreset).Bootstrap; !reflect.DeepEqual(got, want) {
+		if got := preset(t, cfg, DefaultPreset).Profiles; !reflect.DeepEqual(got, want) {
 			t.Errorf("round trip of %v gave %v", want, got)
 		}
 	}
 }
 
-// A generated config teaches local and central — commented out, so their
-// defaults stay in force — and the example of a second preset survives into the
-// file in both places a config can live.
-func TestWriteDocumentsLocalAndCentral(t *testing.T) {
+// A generated config teaches local_store and central_store — commented out, so
+// their defaults stay in force — and every comment survives into the file in
+// both places a config can live. yaml.v3 drops some trailing comments, and a
+// group holding nothing but comments is the most exposed: hence checking the
+// access block and the example of a second preset in particular.
+func TestWriteDocumentsTheSettings(t *testing.T) {
 	for _, tc := range []struct{ name, file, seed string }{
 		{"own file", FileName, ""},
 		{"go.yaml", GoYAMLFile, goYAML},
@@ -264,9 +305,12 @@ func TestWriteDocumentsLocalAndCentral(t *testing.T) {
 			}
 			got := readFile(t, path)
 			for _, want := range []string{
-				"# local: all", "selected   only those the profiles above select",
-				"# central: true", "false      this project's local store only",
-				"frontend:", // the example of a second preset
+				"# startup: what a session with this preset starts with.",
+				"profiles: [python]",
+				"# local_store: all", "selected   only those the profiles above select by tag",
+				"# access: what a session with this preset may reach at all.",
+				"#   central_store: true", "false      this project's local store only",
+				"#     frontend:", "#         profiles: [react]", // the example of a second preset
 				"keep default", "light",
 			} {
 				if !strings.Contains(got, want) {
@@ -283,8 +327,47 @@ func TestWriteDocumentsLocalAndCentral(t *testing.T) {
 				t.Errorf("Names = %v, want %v", cfg.Names(), want)
 			}
 			def := preset(t, cfg, DefaultPreset)
-			if def.Local != LocalAll || !def.Central {
-				t.Errorf("settings = local %q central %v, want the defaults", def.Local, def.Central)
+			if def.LocalStore != LocalAll || !def.CentralStore {
+				t.Errorf("settings = local %q central %v, want the defaults", def.LocalStore, def.CentralStore)
+			}
+		})
+	}
+}
+
+// Where a comment sits matters as much as whether it survives: one that drifts
+// into the files list reads as if it belonged to it. yaml.v3 re-indents a
+// comment that follows a block list, so this writes a non-empty files list —
+// the case that moved it — and checks each setting's documentation stays level
+// with the keys it sits among, in both places a config can live.
+func TestWriteKeepsCommentsAtTheirKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, seed string
+		indent           string // the preset's own indentation in this file
+	}{
+		{"own file", FileName, "", "    "},
+		{"go.yaml", GoYAMLFile, goYAML, "        "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.seed != "" {
+				write(t, filepath.Join(dir, tc.file), tc.seed)
+			}
+			path, err := Write(dir, []string{"python"}, []string{"AGENTS.md", "docs/arch.md"})
+			if err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			got := readFile(t, path)
+			inStartup := tc.indent + "  "
+			for _, want := range []string{
+				"\n" + tc.indent + "startup:\n",
+				"\n" + inStartup + "# local_store: all\n",
+				"\n" + inStartup + "files:\n",
+				"\n" + tc.indent + "# access:\n",
+				"\n" + tc.indent + "#   central_store: true\n",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("%s lacks %q at its key's indentation:\n%s", tc.file, strings.TrimPrefix(want, "\n"), got)
+				}
 			}
 		})
 	}
@@ -296,18 +379,18 @@ func TestWriteDocumentsLocalAndCentral(t *testing.T) {
 func TestLoadReadsGoYAMLExternalSection(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, GoYAMLFile), goYAML+
-		"  contour:\n    presets:\n      default:\n        bootstrap: [python, cli]\n        eager_files:\n          - AGENTS.md\n")
+		"  contour:\n    presets:\n      default:\n        startup:\n          profiles: [python, cli]\n          files:\n            - AGENTS.md\n")
 
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	def := preset(t, cfg, DefaultPreset)
-	if want := []string{"python", "cli"}; !reflect.DeepEqual(def.Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v", def.Bootstrap, want)
+	if want := []string{"python", "cli"}; !reflect.DeepEqual(def.Profiles, want) {
+		t.Errorf("Bootstrap = %v, want %v", def.Profiles, want)
 	}
-	if len(def.EagerFiles) != 1 || def.EagerFiles[0].ID != "AGENTS.md" {
-		t.Errorf("EagerFiles = %v, want [AGENTS.md]", def.EagerFiles)
+	if len(def.Files) != 1 || def.Files[0].ID != "AGENTS.md" {
+		t.Errorf("EagerFiles = %v, want [AGENTS.md]", def.Files)
 	}
 	if cfg.Path != filepath.Join(dir, GoYAMLFile) {
 		t.Errorf("Path = %q, want the go.yaml", cfg.Path)
@@ -320,14 +403,14 @@ func TestLoadReadsGoYAMLExternalSection(t *testing.T) {
 func TestLoadIgnoresGoYAMLWithoutContourSection(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, GoYAMLFile), goYAML)
-	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    bootstrap: [python]\n")
+	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    startup:\n      profiles: [python]\n")
 
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if want := []string{"python"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v from .contour.yaml", preset(t, cfg, DefaultPreset).Bootstrap, want)
+	if want := []string{"python"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Profiles, want) {
+		t.Errorf("Profiles = %v, want %v from .contour.yaml", preset(t, cfg, DefaultPreset).Profiles, want)
 	}
 	if cfg.Path != filepath.Join(dir, FileName) {
 		t.Errorf("Path = %q, want the .contour.yaml", cfg.Path)
@@ -342,15 +425,15 @@ func TestLoadIgnoresGoYAMLWithoutContourSection(t *testing.T) {
 // The shadowed host section is named rather than silently ignored.
 func TestLoadPrefersOwnFileOverHostAndWarns(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, GoYAMLFile), goYAML+"  contour:\n    presets:\n      default:\n        bootstrap: [fromgo]\n")
-	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    bootstrap: [fromown]\n")
+	write(t, filepath.Join(dir, GoYAMLFile), goYAML+"  contour:\n    presets:\n      default:\n        startup:\n          profiles: [fromgo]\n")
+	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    startup:\n      profiles: [fromown]\n")
 
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if want := []string{"fromown"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v (.contour.yaml wins)", preset(t, cfg, DefaultPreset).Bootstrap, want)
+	if want := []string{"fromown"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Profiles, want) {
+		t.Errorf("Bootstrap = %v, want %v (.contour.yaml wins)", preset(t, cfg, DefaultPreset).Profiles, want)
 	}
 	if len(cfg.Warnings) != 1 || !strings.Contains(cfg.Warnings[0], GoYAMLFile) {
 		t.Errorf("expected a warning naming %s, got %v", GoYAMLFile, cfg.Warnings)
@@ -397,11 +480,11 @@ func TestWriteTargetsGoYAMLWhenPresent(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	def := preset(t, cfg, DefaultPreset)
-	if want := []string{"python", "cli"}; !reflect.DeepEqual(def.Bootstrap, want) {
-		t.Errorf("round trip gave %v, want %v", def.Bootstrap, want)
+	if want := []string{"python", "cli"}; !reflect.DeepEqual(def.Profiles, want) {
+		t.Errorf("round trip gave %v, want %v", def.Profiles, want)
 	}
-	if len(def.EagerFiles) != 1 || def.EagerFiles[0].ID != "AGENTS.md" {
-		t.Errorf("round trip gave EagerFiles %v", def.EagerFiles)
+	if len(def.Files) != 1 || def.Files[0].ID != "AGENTS.md" {
+		t.Errorf("round trip gave EagerFiles %v", def.Files)
 	}
 }
 
@@ -432,7 +515,7 @@ func TestWritePreservesTheRestOfGoYAML(t *testing.T) {
 // Overwriting an existing contour section must replace it, not append a second.
 func TestWriteReplacesAnExistingContourSection(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, GoYAMLFile), goYAML+"  contour:\n    presets:\n      default:\n        bootstrap: [old]\n")
+	write(t, filepath.Join(dir, GoYAMLFile), goYAML+"  contour:\n    presets:\n      default:\n        startup:\n          profiles: [old]\n")
 
 	if _, err := Write(dir, []string{"new"}, nil); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -452,7 +535,7 @@ func TestWriteReplacesAnExistingContourSection(t *testing.T) {
 func TestWritePrefersAnExistingOwnFileOverAHost(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, GoYAMLFile), goYAML)
-	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    bootstrap: [old]\n")
+	write(t, filepath.Join(dir, FileName), "presets:\n  default:\n    startup:\n      profiles: [old]\n")
 
 	path, err := Write(dir, []string{"new"}, nil)
 	if err != nil {
@@ -486,16 +569,16 @@ func TestLoadMigratesTheOldShapeIntoTheDefaultPreset(t *testing.T) {
 		t.Errorf("expected one migration notice, got %v", cfg.Warnings)
 	}
 	def := preset(t, cfg, DefaultPreset)
-	if want := []string{"go", "cli"}; !reflect.DeepEqual(def.Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v carried over", def.Bootstrap, want)
+	if want := []string{"go", "cli"}; !reflect.DeepEqual(def.Profiles, want) {
+		t.Errorf("Bootstrap = %v, want %v carried over", def.Profiles, want)
 	}
-	if len(def.EagerFiles) != 1 || def.EagerFiles[0].ID != "AGENTS.md" {
-		t.Errorf("EagerFiles = %v, want [AGENTS.md] carried over", def.EagerFiles)
+	if len(def.Files) != 1 || def.Files[0].ID != "AGENTS.md" {
+		t.Errorf("EagerFiles = %v, want [AGENTS.md] carried over", def.Files)
 	}
 
 	// The file itself is now in the new shape, documented like a generated one.
 	got := readFile(t, path)
-	for _, want := range []string{"presets:", "  default:", "bootstrap: [go, cli]", "- AGENTS.md", "# local: all", "# central: true"} {
+	for _, want := range []string{"presets:", "  default:", "    startup:", "profiles: [go, cli]", "- AGENTS.md", "# local_store: all", "#   central_store: true"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("migrated file lacks %q:\n%s", want, got)
 		}
@@ -527,7 +610,7 @@ func TestLoadMigratesAGoYAMLSection(t *testing.T) {
 		t.Fatal("Migrated = false for an old-shape go.yaml section")
 	}
 	got := readFile(t, path)
-	for _, want := range []string{"name: myproject", "version: 1.2.3", "build: \"go build ./...\"", "presets:", "bootstrap: [go]"} {
+	for _, want := range []string{"name: myproject", "version: 1.2.3", "build: \"go build ./...\"", "presets:", "startup:", "profiles: [go]"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("migrated go.yaml lacks %q:\n%s", want, got)
 		}
@@ -535,8 +618,8 @@ func TestLoadMigratesAGoYAMLSection(t *testing.T) {
 	if strings.Contains(got, "\n    bootstrap: [go]\n    eager_files") {
 		t.Errorf("the old top-level keys are still in the contour section:\n%s", got)
 	}
-	if want := []string{"go"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v", preset(t, cfg, DefaultPreset).Bootstrap, want)
+	if want := []string{"go"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Profiles, want) {
+		t.Errorf("Bootstrap = %v, want %v", preset(t, cfg, DefaultPreset).Profiles, want)
 	}
 }
 
@@ -559,8 +642,8 @@ func TestLoadServesAnOldConfigItCannotRewrite(t *testing.T) {
 	if cfg.Migrated {
 		t.Error("Migrated = true although the file could not be written")
 	}
-	if want := []string{"go"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v from the in-memory migration", preset(t, cfg, DefaultPreset).Bootstrap, want)
+	if want := []string{"go"}; !reflect.DeepEqual(preset(t, cfg, DefaultPreset).Profiles, want) {
+		t.Errorf("Bootstrap = %v, want %v from the in-memory migration", preset(t, cfg, DefaultPreset).Profiles, want)
 	}
 	if len(cfg.Warnings) != 1 || !strings.Contains(cfg.Warnings[0], "could not be migrated") {
 		t.Errorf("expected a could-not-migrate warning, got %v", cfg.Warnings)
@@ -572,7 +655,7 @@ func TestLoadServesAnOldConfigItCannotRewrite(t *testing.T) {
 // drop settings either way.
 func TestLoadRejectsAMixOfOldAndNewShapes(t *testing.T) {
 	dir := t.TempDir()
-	body := "bootstrap: [go]\npresets:\n  default:\n    bootstrap: [python]\n"
+	body := "bootstrap: [go]\npresets:\n  default:\n    startup:\n      profiles: [python]\n"
 	write(t, filepath.Join(dir, FileName), body)
 
 	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "presets.default") {
@@ -597,11 +680,11 @@ func TestEnsureCreatesAConfigWhenNoneExists(t *testing.T) {
 		t.Errorf("Path = %q, want the new .contour.yaml", cfg.Path)
 	}
 	def := preset(t, cfg, DefaultPreset)
-	if want := []string{"python", "cli"}; !reflect.DeepEqual(def.Bootstrap, want) {
-		t.Errorf("Bootstrap = %v, want %v", def.Bootstrap, want)
+	if want := []string{"python", "cli"}; !reflect.DeepEqual(def.Profiles, want) {
+		t.Errorf("Bootstrap = %v, want %v", def.Profiles, want)
 	}
-	if len(def.EagerFiles) != 1 || def.EagerFiles[0].ID != "AGENTS.md" {
-		t.Errorf("EagerFiles = %v, want [AGENTS.md]", def.EagerFiles)
+	if len(def.Files) != 1 || def.Files[0].ID != "AGENTS.md" {
+		t.Errorf("EagerFiles = %v, want [AGENTS.md]", def.Files)
 	}
 }
 
@@ -613,9 +696,9 @@ func TestEnsureLeavesAnExistingConfigUntouched(t *testing.T) {
 		name, file, body string
 	}{
 		{"own file", FileName,
-			"# the team's notes\npresets:\n  default:\n    bootstrap: [go]   # chosen on purpose\n\n    eager_files:\n      - NOTES.md\n"},
+			"# the team's notes\npresets:\n  default:\n    startup:\n      profiles: [go]   # chosen on purpose\n\n      files:\n        - NOTES.md\n"},
 		{"go.yaml section", GoYAMLFile,
-			goYAML + "  contour:\n    # the team's notes\n    presets:\n      default:\n        bootstrap: [go]\n        eager_files: [NOTES.md]\n"},
+			goYAML + "  contour:\n    # the team's notes\n    presets:\n      default:\n        startup:\n          profiles: [go]\n          files: [NOTES.md]\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -631,11 +714,11 @@ func TestEnsureLeavesAnExistingConfigUntouched(t *testing.T) {
 			}
 			unchanged(t, path, tc.body)
 			def := preset(t, cfg, DefaultPreset)
-			if want := []string{"go"}; !reflect.DeepEqual(def.Bootstrap, want) {
-				t.Errorf("Bootstrap = %v, want the existing %v", def.Bootstrap, want)
+			if want := []string{"go"}; !reflect.DeepEqual(def.Profiles, want) {
+				t.Errorf("Bootstrap = %v, want the existing %v", def.Profiles, want)
 			}
-			if len(def.EagerFiles) != 1 || def.EagerFiles[0].ID != "NOTES.md" {
-				t.Errorf("EagerFiles = %v, want the existing [NOTES.md], not re-detected ones", def.EagerFiles)
+			if len(def.Files) != 1 || def.Files[0].ID != "NOTES.md" {
+				t.Errorf("EagerFiles = %v, want the existing [NOTES.md], not re-detected ones", def.Files)
 			}
 		})
 	}
@@ -644,7 +727,7 @@ func TestEnsureLeavesAnExistingConfigUntouched(t *testing.T) {
 // Re-running the very command that created the config must be harmless.
 func TestEnsureAcceptsTheProfilesAlreadySelected(t *testing.T) {
 	dir := t.TempDir()
-	body := "presets:\n  default:\n    bootstrap: [python, cli]\n"
+	body := "presets:\n  default:\n    startup:\n      profiles: [python, cli]\n"
 	write(t, filepath.Join(dir, FileName), body)
 
 	// Duplicates and stray whitespace normalise to the same selection.
@@ -662,10 +745,10 @@ func TestEnsureRefusesToChangeTheProfiles(t *testing.T) {
 		existing  string
 		requested []string
 	}{
-		{"different profile", "presets:\n  default:\n    bootstrap: [go]\n", []string{"python"}},
-		{"different order", "presets:\n  default:\n    bootstrap: [python, cli]\n", []string{"cli", "python"}},
-		{"existing is empty", "presets:\n  default:\n    bootstrap: []\n", []string{"python"}},
-		{"no default preset", "presets:\n  frontend:\n    bootstrap: [react]\n", []string{"python"}},
+		{"different profile", "presets:\n  default:\n    startup:\n      profiles: [go]\n", []string{"python"}},
+		{"different order", "presets:\n  default:\n    startup:\n      profiles: [python, cli]\n", []string{"cli", "python"}},
+		{"existing is empty", "presets:\n  default:\n    startup:\n      profiles: []\n", []string{"python"}},
+		{"no default preset", "presets:\n  frontend:\n    startup:\n      profiles: [react]\n", []string{"python"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

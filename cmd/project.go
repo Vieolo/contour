@@ -17,7 +17,7 @@ var mcpPreset string
 
 // mcpSession records which stores the running MCP session's tools may reach.
 //
-// It exists for central: false, which keeps a developer's personal store out of
+// It exists for access.central_store: false, which keeps a developer's personal store out of
 // an agent's session. It starts from the preset the session began with and only
 // ever widens: loading a preset adds to a session rather than replacing what is
 // there, so loading one that uses the central store opens it to the tools from
@@ -35,14 +35,14 @@ var mcpSession struct {
 func startSession(p project.Preset) {
 	mcpSession.Lock()
 	defer mcpSession.Unlock()
-	mcpSession.active, mcpSession.central = true, p.Central
+	mcpSession.active, mcpSession.central = true, p.CentralStore
 }
 
 // widenSession admits a preset loaded part-way through a session to its scope.
 func widenSession(p project.Preset) {
 	mcpSession.Lock()
 	defer mcpSession.Unlock()
-	if p.Central {
+	if p.CentralStore {
 		mcpSession.central = true
 	}
 }
@@ -93,12 +93,12 @@ func projectContext() (overlays []string, cfg project.Config) {
 // can still search the backend's AGENTS.md.
 //
 // The central store is left out in a session that has only loaded presets with
-// central: false.
+// access.central_store: false.
 func loadProjectStore(central string) (*store.Store, error) {
 	overlays, cfg := projectContext()
 	var eager []store.EagerFile
 	for _, p := range cfg.Presets {
-		eager = append(eager, p.EagerFiles...)
+		eager = append(eager, p.Files...)
 	}
 	if !reachesCentral() {
 		central = ""
@@ -111,13 +111,13 @@ func loadProjectStore(central string) (*store.Store, error) {
 // alone. Composing a payload needs exactly this — the eager files in the store
 // are always delivered, so another preset's here would leak into this one's.
 func loadPresetStore(central string, overlays []string, preset project.Preset) (*store.Store, error) {
-	return store.LoadProject(presetCentral(central, preset), overlays, preset.EagerFiles)
+	return store.LoadProject(presetCentral(central, preset), overlays, preset.Files)
 }
 
 // presetCentral returns the central store's root for a preset, or "" when the
 // preset uses the project's local store only.
 func presetCentral(central string, preset project.Preset) string {
-	if !preset.Central {
+	if !preset.CentralStore {
 		return ""
 	}
 	return central

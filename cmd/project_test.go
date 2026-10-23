@@ -20,22 +20,22 @@ func TestSessionScope(t *testing.T) {
 		t.Fatal("the terminal is scoped away from the central store")
 	}
 
-	startSession(project.Preset{Name: "default", Central: false})
+	startSession(project.Preset{Name: "default", CentralStore: false})
 	if reachesCentral() {
 		t.Error("a central: false session reaches the central store")
 	}
 
-	widenSession(project.Preset{Name: "other-local", Central: false})
+	widenSession(project.Preset{Name: "other-local", CentralStore: false})
 	if reachesCentral() {
 		t.Error("loading another central: false preset opened the central store")
 	}
 
-	widenSession(project.Preset{Name: "full", Central: true})
+	widenSession(project.Preset{Name: "full", CentralStore: true})
 	if !reachesCentral() {
 		t.Error("loading a preset that uses the central store did not open it")
 	}
 
-	widenSession(project.Preset{Name: "back-to-local", Central: false})
+	widenSession(project.Preset{Name: "back-to-local", CentralStore: false})
 	if !reachesCentral() {
 		t.Error("loading a central: false preset narrowed the session again")
 	}

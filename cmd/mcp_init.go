@@ -88,7 +88,7 @@ var mcpInitCmd = &cobra.Command{
 			def, _ := cfg.Select("")
 			return fmt.Errorf("%s already exists (default preset: bootstrap [%s]) and mcp-init never changes an existing project config — "+
 				"edit that file to switch profiles, or run without --bootstrap to just register contour on this machine",
-				cfg.Path, strings.Join(def.Bootstrap, ", "))
+				cfg.Path, strings.Join(def.Profiles, ", "))
 		}
 		if err != nil {
 			return err
@@ -125,14 +125,14 @@ var mcpInitCmd = &cobra.Command{
 			termange.PrintInfof("  presets: %s\n", strings.Join(cfg.Names(), ", "))
 		}
 		def, _ := cfg.Select("")
-		for _, p := range def.Bootstrap {
+		for _, p := range def.Profiles {
 			termange.PrintInfof("  profile: %s\n", p)
 		}
-		for _, f := range def.EagerFiles {
+		for _, f := range def.Files {
 			termange.PrintInfof("  eager:   %s\n", f.ID)
 		}
 
-		if len(def.Bootstrap) == 0 {
+		if len(def.Profiles) == 0 {
 			termange.PrintWarningf("\nThe default preset loads no profile — add `bootstrap: [<name>]` to it in %s (%s bootstrap lists them).\n",
 				cfg.Path, config.Program)
 		}
@@ -190,7 +190,7 @@ func pickProfiles(projectDir string) ([]string, error) {
 		def, _ := existing.Select("")
 		return nil, fmt.Errorf("%s already exists (default preset: bootstrap [%s]) and mcp-init never changes an existing project config — "+
 			"run without --interactive to just register contour on this machine, or edit that file to switch profiles",
-			existing.Path, strings.Join(def.Bootstrap, ", "))
+			existing.Path, strings.Join(def.Profiles, ", "))
 	}
 
 	home, err := resolveStore()
@@ -272,7 +272,7 @@ func isTerminal(f *os.File) bool {
 // presets use cannot be found. The config came from the team, but the store is
 // this machine's; saying so at setup beats discovering it from a session that
 // quietly lacks some rules. Each preset is checked against what it may use, so
-// a central: false preset naming a central profile is caught too.
+// a access.central_store: false preset naming a central profile is caught too.
 func warnMissingProfiles(cfg project.Config) {
 	home, err := resolveStore()
 	if err != nil {
@@ -282,7 +282,7 @@ func warnMissingProfiles(cfg project.Config) {
 
 	var missing []string
 	for _, p := range cfg.Presets {
-		_, m, err := bootstrap.LoadAvailable(profileSources(presetCentral(home.Path, p), overlays), p.Bootstrap)
+		_, m, err := bootstrap.LoadAvailable(profileSources(presetCentral(home.Path, p), overlays), p.Profiles)
 		if err != nil {
 			return
 		}
@@ -294,7 +294,7 @@ func warnMissingProfiles(cfg project.Config) {
 		return
 	}
 	termange.PrintWarningf("\nThese profiles cannot be found for the presets that use them: %s\n"+
-		"Sessions will start without their rules. A preset with central: false can use only the project's own "+
+		"Sessions will start without their rules. A preset with access.central_store: false can use only the project's own "+
 		"profiles; any other needs the profile in the project or your store (%s bootstrap lists yours).\n",
 		strings.Join(missing, ", "), config.Program)
 }

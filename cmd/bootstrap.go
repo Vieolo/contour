@@ -86,7 +86,7 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 			if !ok {
 				return fmt.Errorf("no preset named %q in this project%s", bootstrapPreset, presetsAvailable(cfg))
 			}
-			composed, missing, err = composePreset(home.Path, overlays, preset, preset.Bootstrap)
+			composed, missing, err = composePreset(home.Path, overlays, preset, preset.Profiles)
 			if err != nil {
 				return err
 			}
@@ -104,15 +104,15 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 				return withAvailableProfiles(src, err)
 			}
 			// Naming profiles is an explicit request to see what they compose
-			// to, central ones included, so central: false — which governs what
+			// to, central ones included, so access.central_store: false — which governs what
 			// an agent's session gets — does not apply here.
 			def, _ := cfg.Select("")
-			def.Central = true
+			def.CentralStore = true
 			st, err := loadPresetStore(home.Path, overlays, def)
 			if err != nil {
 				return err
 			}
-			composed = bootstrap.Compose(profiles, st, def.Local == project.LocalAll)
+			composed = bootstrap.Compose(profiles, st, def.LocalStore == project.LocalAll)
 		}
 
 		// Diagnostics go to stderr so stdout stays a clean, pipeable payload.
@@ -147,7 +147,7 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 				return nil, nil, asToolError(err)
 			}
 			mcpUsage.Bootstrap(preset.Name)
-			return mcpserver.TextResult(mcpserver.MissingProfilesNotice(missing, preset.Central)+composed.Render(mcpserver.FetchHint),
+			return mcpserver.TextResult(mcpserver.MissingProfilesNotice(missing, preset.CentralStore)+composed.Render(mcpserver.FetchHint),
 				"No rules are in effect: this session has no bootstrap profile and the project has no local rules."), nil, nil
 		}
 
@@ -157,7 +157,7 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 				fmt.Sprintf("this project has no preset named %q", name),
 				"pass one of the presets listed in the server instructions"+presetsAvailable(cfg))
 		}
-		composed, missing, err := composePreset(home.Path, overlays, preset, preset.Bootstrap)
+		composed, missing, err := composePreset(home.Path, overlays, preset, preset.Profiles)
 		if err != nil {
 			return nil, nil, asToolError(err)
 		}
@@ -165,7 +165,7 @@ var bootstrapCmd = unic.UniversalCommand[bootstrapInput, any]{
 		widenSession(preset)
 
 		body, repeated := composed.RenderSkipping(func(id string) bool { return mcpInInstructions[id] }, mcpserver.FetchHint)
-		return mcpserver.TextResult(presetHeader(preset, repeated)+mcpserver.MissingProfilesNotice(missing, preset.Central)+body,
+		return mcpserver.TextResult(presetHeader(preset, repeated)+mcpserver.MissingProfilesNotice(missing, preset.CentralStore)+body,
 			fmt.Sprintf("The %q preset adds nothing beyond what is already in effect.", preset.Name)), nil, nil
 	},
 }
@@ -187,7 +187,7 @@ func composePreset(root string, overlays []string, preset project.Preset, profil
 	if err != nil {
 		return bootstrap.Composed{}, nil, err
 	}
-	return bootstrap.Compose(profiles, st, preset.Local == project.LocalAll), missing, nil
+	return bootstrap.Compose(profiles, st, preset.LocalStore == project.LocalAll), missing, nil
 }
 
 // presetHeader opens a preset loaded part-way through a session: what it is,
@@ -229,7 +229,7 @@ func listProfiles(src bootstrap.Sources, cfg project.Config) error {
 			if p.Description != "" {
 				termange.PrintInfof("      %s\n", p.Description)
 			}
-			termange.PrintColorf(termange.ColorYellow, "      bootstrap: %s\n", tagList(p.Bootstrap))
+			termange.PrintColorf(termange.ColorYellow, "      profiles: %s\n", tagList(p.Profiles))
 		}
 		termange.PrintInfof("\nEmit one with: %s bootstrap --preset <name>\n\n", config.Program)
 	}

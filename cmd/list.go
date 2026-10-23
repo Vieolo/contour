@@ -149,13 +149,13 @@ func init() {
 }
 
 // includesAllLocal reports whether any session in the project gets all of its
-// local items — true with no presets, or with any preset using local: all.
+// local items — true with no presets, or with any preset using startup.local_store: all.
 func includesAllLocal(cfg project.Config) bool {
 	if len(cfg.Presets) == 0 {
 		return true
 	}
 	for _, p := range cfg.Presets {
-		if p.Local == project.LocalAll {
+		if p.LocalStore == project.LocalAll {
 			return true
 		}
 	}

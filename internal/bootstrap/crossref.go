@@ -26,7 +26,7 @@ type ItemProfiles struct {
 
 	// Profiles are the names of the profiles that select this item, in the order
 	// the profiles were given. Project items are selected by tag like central
-	// ones; a preset with `local: all` just does not need them to be.
+	// ones; a preset with `startup.local_store: all` just does not need them to be.
 	Profiles []string
 
 	// alwaysActive records that the item is delivered without any profile
@@ -36,7 +36,7 @@ type ItemProfiles struct {
 
 // AlwaysActive reports whether the item is delivered irrespective of any
 // profile: a file the project config lists by name, or a project item when
-// the project's presets include all of theirs (`local: all`, the default).
+// the project's presets include all of theirs (`startup.local_store: all`, the default).
 func (ip ItemProfiles) AlwaysActive() bool {
 	return ip.alwaysActive
 }
@@ -50,8 +50,8 @@ func (ip ItemProfiles) Offered() bool {
 // CrossReference pairs every item in the store with the profiles that select it.
 //
 // localAlwaysActive says whether project items count as always active — true
-// when the project has no presets or some preset uses `local: all`. A project
-// whose presets all use `local: selected` gets its items only through profiles,
+// when the project has no presets or some preset uses `startup.local_store: all`. A project
+// whose presets all use `startup.local_store: selected` gets its items only through profiles,
 // so for it an unselected project item is as unoffered as a central one.
 func CrossReference(profiles []Profile, st *store.Store, localAlwaysActive bool) CrossRef {
 	items := make([]ItemProfiles, 0, len(st.All()))

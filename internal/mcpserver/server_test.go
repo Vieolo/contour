@@ -248,7 +248,7 @@ func TestBuildInstructionsWithoutTheCentralStore(t *testing.T) {
 		t.Fatalf("BuildInstructions: %v", err)
 	}
 	for _, want := range []string{"Team preamble.", "Two approvals before merging.", "Use the project logger.",
-		"not among this project's own profiles", "central: false"} {
+		"not among this project's own profiles", "access.central_store: false"} {
 		if !strings.Contains(got.Text, want) {
 			t.Errorf("instructions lack %q:\n%s", want, got.Text)
 		}

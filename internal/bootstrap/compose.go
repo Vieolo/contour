@@ -51,7 +51,7 @@ type UnmatchedTag struct {
 // before presets could choose. Without it, project items are treated like
 // central ones: in only if a profile's tags select them. That is what lets a
 // large project keep its context in one local store and hand each preset just
-// its part. Files the project config names in eager_files are in either way.
+// its part. Files the project config lists in startup.files are in either way.
 func Compose(profiles []Profile, st *store.Store, allLocal bool) Composed {
 	return Composed{
 		Profiles:      profiles,
