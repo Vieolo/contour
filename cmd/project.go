@@ -42,12 +42,27 @@ func projectContext() (overlays []string, cfg project.Config) {
 	return overlays, cfg
 }
 
-// loadProjectStore loads the central store merged with the working directory's
-// overlays and the eager files of the preset in effect — the one the MCP server
-// started with, or default.
+// loadProjectStore loads what the list, search and get commands reach: the
+// central store merged with the working directory's overlays and the eager
+// files of every preset.
+//
+// Every preset's, not just the session's: a preset decides what is offered to
+// an agent up front, never what it can reach. An agent in a frontend session
+// can still search the backend's AGENTS.md.
 func loadProjectStore(central string) (*store.Store, error) {
 	overlays, cfg := projectContext()
-	preset, _ := cfg.Select(mcpPreset)
+	var eager []store.EagerFile
+	for _, p := range cfg.Presets {
+		eager = append(eager, p.EagerFiles...)
+	}
+	return store.LoadProject(central, overlays, eager)
+}
+
+// loadPresetStore loads the store as one preset sees it: the central store and
+// overlays, plus that preset's eager files alone. Composing a payload needs
+// exactly this — every local rule in the store is delivered eagerly, so another
+// preset's eager files here would leak into this one's.
+func loadPresetStore(central string, overlays []string, preset project.Preset) (*store.Store, error) {
 	return store.LoadProject(central, overlays, preset.EagerFiles)
 }
 

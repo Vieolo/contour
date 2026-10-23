@@ -71,25 +71,22 @@ type Options struct {
 	// instructions cannot cut it.
 	Notices []string
 
-	// Version is reported to clients during initialisation.
-	Version string
+	// Preset is the preset the session started with, and Presets all of the
+	// project's presets; the others are listed for the agent to load.
+	Preset  string
+	Presets []PresetSummary
 }
 
-// New builds the server with the bootstrap payload as its initialisation
-// instructions. The caller registers tools before serving.
-func New(opts Options) (*mcp.Server, error) {
-	instructions, err := BuildInstructions(opts)
-	if err != nil {
-		return nil, err
-	}
-
+// New builds the server with the given initialisation instructions — normally
+// BuildInstructions' Text. The caller registers tools before serving.
+func New(instructions, version string) *mcp.Server {
 	return mcp.NewServer(&mcp.Implementation{
 		Name:    "contour",
 		Title:   "contour context provider",
-		Version: opts.Version,
+		Version: version,
 	}, &mcp.ServerOptions{
 		Instructions: instructions,
-	}), nil
+	})
 }
 
 // Serve runs the server on stdio, blocking until the client disconnects or ctx
@@ -120,12 +117,25 @@ func TextResult(text, fallback string) *mcp.CallToolResult {
 	}
 }
 
+// Instructions are what the client receives at initialisation.
+type Instructions struct {
+	// Text is the instructions themselves.
+	Text string
+
+	// RuleIDs are the rules whose full bodies Text carries. They stay in the
+	// agent's context for the whole session — unlike a tool result, which a
+	// client may compact away — so loading a preset later need not repeat
+	// them.
+	RuleIDs []string
+}
+
 // BuildInstructions composes what the client receives at initialisation: a short
-// preamble, the profile's eager rules, and menus of what can be fetched.
-func BuildInstructions(opts Options) (string, error) {
+// preamble, any notices, the project's other presets, the session's eager rules,
+// and menus of what can be fetched.
+func BuildInstructions(opts Options) (Instructions, error) {
 	st, err := store.LoadProject(opts.Root, opts.Overlays, opts.EagerFiles)
 	if err != nil {
-		return "", err
+		return Instructions{}, err
 	}
 
 	var b strings.Builder
@@ -134,6 +144,7 @@ func BuildInstructions(opts Options) (string, error) {
 		b.WriteString(strings.TrimSpace(n))
 		b.WriteString("\n\n")
 	}
+	b.WriteString(presetsSection(opts.Preset, opts.Presets))
 
 	if len(opts.Profiles) == 0 {
 		writeNoProfileNotice(&b, opts.Root)
@@ -142,7 +153,7 @@ func BuildInstructions(opts Options) (string, error) {
 
 	profiles, missing, err := bootstrap.LoadAvailable(opts.Root, opts.Profiles)
 	if err != nil {
-		return "", err
+		return Instructions{}, err
 	}
 	b.WriteString(MissingProfilesNotice(missing))
 	if len(profiles) == 0 {
@@ -159,14 +170,54 @@ func BuildInstructions(opts Options) (string, error) {
 	ex := composed.RenderWithin(avail, FetchHint)
 	if ex.Complete {
 		b.WriteString(ex.Body)
-		return b.String(), nil
+		return Instructions{Text: b.String(), RuleIDs: ex.ShownIDs}, nil
 	}
 
 	ex = composed.RenderWithin(avail-noticeReserve, FetchHint)
 	b.WriteString(excerptNotice(ex))
 	b.WriteString(ex.Body)
 	b.WriteString(excerptCloser(ex))
-	return b.String(), nil
+	return Instructions{Text: b.String(), RuleIDs: ex.ShownIDs}, nil
+}
+
+// PresetSummary is what the instructions say about one of the project's presets.
+type PresetSummary struct {
+	Name        string
+	Description string
+}
+
+// presetsSection lists the project's presets other than the one the session
+// started with, so the agent knows what it can load and when. It renders as the
+// empty string when there are none.
+//
+// It sits near the top, with the notices, rather than with the menus at the end:
+// in a project set up around a light default, these are the main way into the
+// rest of its context, and the menus are the first thing a long payload drops.
+func presetsSection(current string, presets []PresetSummary) string {
+	var others []PresetSummary
+	for _, p := range presets {
+		if p.Name != current {
+			others = append(others, p)
+		}
+	}
+	if len(others) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("# Presets\n\n")
+	fmt.Fprintf(&b, "This session started with the %q preset. The project defines others, each a starting point for "+
+		"one part of it. Load one with the `bootstrap` tool, passing its name as `preset`, when the user asks for it "+
+		"or the work is clearly about it:\n\n", current)
+	for _, p := range others {
+		if p.Description != "" {
+			fmt.Fprintf(&b, "- %s — %s\n", p.Name, p.Description)
+		} else {
+			fmt.Fprintf(&b, "- %s\n", p.Name)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // noProfileInstructions builds the instructions for a session with no central
@@ -176,7 +227,7 @@ func BuildInstructions(opts Options) (string, error) {
 //
 // Menus go first when space runs short: the list tool reproduces them on demand,
 // whereas a local rule body has no other eager route to the agent.
-func noProfileInstructions(head string, st *store.Store) string {
+func noProfileInstructions(head string, st *store.Store) Instructions {
 	localRules := st.BySource(store.KindRules, store.OriginLocal)
 	// Central rules aren't eager here, but they remain fetchable, so list them
 	// alongside the on-demand skills and knowledge.
@@ -187,17 +238,23 @@ func noProfileInstructions(head string, st *store.Store) string {
 	// Only the local rules are eager, so they are the whole budgeted payload.
 	local := bootstrap.Composed{Rules: localRules}
 	if full := local.RenderWithin(0, FetchHint); len(head)+len(full.Body)+len(menus) <= InstructionsBudget {
-		return strings.TrimRight(head+full.Body+menus, "\n") + "\n"
+		return Instructions{Text: strings.TrimRight(head+full.Body+menus, "\n") + "\n", RuleIDs: full.ShownIDs}
 	}
 
 	// Menus dropped. If the local rules alone still overrun, excerpt them and say so.
 	avail := InstructionsBudget - len(head)
 	if ex := local.RenderWithin(avail, FetchHint); ex.Complete {
-		return strings.TrimRight(head+ex.Body, "\n") + "\n" +
-			"\nThe skills and knowledge menus were omitted for length — use the `list` tool to see them.\n"
+		return Instructions{
+			Text: strings.TrimRight(head+ex.Body, "\n") + "\n" +
+				"\nThe skills and knowledge menus were omitted for length — use the `list` tool to see them.\n",
+			RuleIDs: ex.ShownIDs,
+		}
 	}
 	ex := local.RenderWithin(avail-noticeReserve, FetchHint)
-	return strings.TrimRight(head+excerptNotice(ex)+ex.Body+excerptCloser(ex), "\n") + "\n"
+	return Instructions{
+		Text:    strings.TrimRight(head+excerptNotice(ex)+ex.Body+excerptCloser(ex), "\n") + "\n",
+		RuleIDs: ex.ShownIDs,
+	}
 }
 
 // MissingProfilesNotice tells the agent which of the project's profiles are not

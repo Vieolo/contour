@@ -122,14 +122,16 @@ func (l *Logger) Search(query, kind string, results int) {
 	l.record(Event{Type: "search", Query: query, Kind: kind, Results: &results})
 }
 
-// Bootstrap records that the agent loaded the full session payload. It is the
-// signal for whether an agent acts on an incomplete-instructions notice, which
-// is the only way to tell a truncated session from a well-behaved one.
-func (l *Logger) Bootstrap() {
+// Bootstrap records that the agent loaded a preset's payload: the session's
+// own, or another it asked for by name. It is the signal for whether agents
+// act on an incomplete-instructions notice, and for which presets earn their
+// keep — the event carries the preset loaded, while session_start carries the
+// one the session began with.
+func (l *Logger) Bootstrap(preset string) {
 	if l == nil {
 		return
 	}
-	l.record(Event{Type: "bootstrap"})
+	l.record(Event{Type: "bootstrap", Preset: preset})
 }
 
 // List records a list, optionally filtered by kind.
@@ -147,7 +149,9 @@ func (l *Logger) record(e Event) {
 	e.Time = time.Now().UTC().Format(time.RFC3339)
 	e.Surface = surfaceMCP
 	e.Project = l.project
-	e.Preset = l.preset
+	if e.Preset == "" {
+		e.Preset = l.preset
+	}
 	e.Profile = l.profile
 
 	line, err := json.Marshal(e)

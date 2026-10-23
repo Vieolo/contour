@@ -509,3 +509,40 @@ func TestLoadAvailableFailsOnABrokenProfile(t *testing.T) {
 		t.Error("LoadAvailable skipped a profile that exists but cannot be parsed")
 	}
 }
+
+// Loading a preset part-way through a session leaves out the rules the agent
+// already has, says which, and keeps the menus whole.
+func TestRenderSkippingLeavesOutDeliveredRulesOnly(t *testing.T) {
+	c := compose(t, testRoot(t), "python")
+
+	body, skipped := c.RenderSkipping(func(id string) bool { return id == "rules/general/010-comm" }, "get <id>")
+
+	if !reflect.DeepEqual(skipped, []string{"rules/general/010-comm"}) {
+		t.Errorf("skipped = %v", skipped)
+	}
+	if strings.Contains(body, "Be concise.") {
+		t.Error("a skipped rule's body was rendered")
+	}
+	for _, want := range []string{"Wrap errors.", "Shared rule.", "- skills/python/release", "- knowledge/general/stack"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// ShownIDs names what an excerpt actually carries — nothing more.
+func TestRenderWithinReportsShownIDs(t *testing.T) {
+	c := compose(t, bigRoot(t), "python")
+	ex := c.RenderWithin(900, "get <id>")
+	if len(ex.ShownIDs) != ex.ShownRules {
+		t.Fatalf("ShownIDs has %d entries, ShownRules says %d", len(ex.ShownIDs), ex.ShownRules)
+	}
+	for _, id := range ex.ShownIDs {
+		if !strings.Contains(ex.Body, "## "+id) {
+			t.Errorf("ShownIDs claims %q, which the body does not show", id)
+		}
+	}
+	if full := c.RenderWithin(0, "get <id>"); len(full.ShownIDs) != len(c.Rules) {
+		t.Errorf("a complete render shows %d IDs, want all %d", len(full.ShownIDs), len(c.Rules))
+	}
+}

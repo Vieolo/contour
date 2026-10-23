@@ -95,17 +95,28 @@ var mcpCmd = &cobra.Command{
 			}
 		}
 
-		server, err := mcpserver.New(mcpserver.Options{
+		summaries := make([]mcpserver.PresetSummary, 0, len(cfg.Presets))
+		for _, p := range cfg.Presets {
+			summaries = append(summaries, mcpserver.PresetSummary{Name: p.Name, Description: p.Description})
+		}
+		instructions, err := mcpserver.BuildInstructions(mcpserver.Options{
 			Root:       home.Path,
 			Overlays:   overlays,
 			EagerFiles: preset.EagerFiles,
 			Profiles:   profiles,
 			Notices:    notices,
-			Version:    cliVersion(),
+			Preset:     preset.Name,
+			Presets:    summaries,
 		})
 		if err != nil {
 			return err
 		}
+		// Remember what the instructions delivered in full, so a preset loaded
+		// later can leave it out.
+		for _, id := range instructions.RuleIDs {
+			mcpInInstructions[id] = true
+		}
+		server := mcpserver.New(instructions.Text, cliVersion())
 
 		// Registering the dual-usage commands from `mcpCommands`
 		// The commands are automatically added to `mcpCommands` via

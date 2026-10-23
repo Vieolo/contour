@@ -122,3 +122,46 @@ func TestNilLoggerIsSafe(t *testing.T) {
 		t.Errorf("Close on nil = %v, want nil", err)
 	}
 }
+
+// session_start carries the preset the session began with; each bootstrap event
+// carries the preset it loaded — so stats can tell which presets get used.
+func TestLoggerRecordsPresets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+
+	l, err := Open("frontend", []string{"react"})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	l.Bootstrap("frontend") // the session's own payload
+	l.Bootstrap("backend")  // another preset, loaded on demand
+	l.Get("rules/x", true)  // an ordinary event: the session's preset
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	usageDir, err := config.UsageDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join(usageDir, "*", "*.jsonl"))
+	if len(files) != 1 {
+		t.Fatalf("want one session file, got %v", files)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var e Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, e.Type+":"+e.Preset)
+	}
+	want := []string{"session_start:frontend", "bootstrap:frontend", "bootstrap:backend", "get:frontend"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("events = %v, want %v", got, want)
+	}
+}

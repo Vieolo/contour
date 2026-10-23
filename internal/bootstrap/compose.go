@@ -208,6 +208,9 @@ type Excerpt struct {
 	// ShownRules and TotalRules count the rules included versus selected.
 	ShownRules, TotalRules int
 
+	// ShownIDs are the IDs of the rules whose full bodies Body carries.
+	ShownIDs []string
+
 	// ShownChars and TotalChars are the size of Body versus the complete payload
 	// as rendered for this surface. They are close to, but not identical with,
 	// what `contour bootstrap` prints: the CLI passes a different fetch hint. The
@@ -235,6 +238,7 @@ func (c Composed) RenderWithin(budget int, fetchHint string) Excerpt {
 		Complete:      true,
 		ShownRules:    len(c.Rules),
 		TotalRules:    len(c.Rules),
+		ShownIDs:      itemIDs(c.Rules),
 		ShownChars:    len(full),
 		TotalChars:    len(full),
 		MenusIncluded: true,
@@ -266,9 +270,38 @@ func (c Composed) RenderWithin(budget int, fetchHint string) Excerpt {
 	ex.Body = body
 	ex.Complete = false
 	ex.ShownRules = nStore + nLocal
+	ex.ShownIDs = append(itemIDs(storeRules[:nStore]), itemIDs(localRules[:nLocal])...)
 	ex.ShownChars = len(body)
 	ex.MenusIncluded = menus
 	return ex
+}
+
+// RenderSkipping renders the full payload, except that rules for which skip
+// reports true are left out, and returns the IDs it left out.
+//
+// It serves loading a preset part-way through a session: rules the agent was
+// already given at the start would only be repeated, spending the context a
+// preset exists to save. Menus are never skipped — a menu line is cheap, and
+// listing the preset's skills and knowledge is half of what loading it is for.
+func (c Composed) RenderSkipping(skip func(id string) bool, fetchHint string) (string, []string) {
+	var kept, skipped []store.Item
+	for _, it := range c.Rules {
+		if skip(it.ID) {
+			skipped = append(skipped, it)
+			continue
+		}
+		kept = append(kept, it)
+	}
+	storeRules, localRules := partitionBySource(kept)
+	return c.render(storeRules, localRules, true, fetchHint), itemIDs(skipped)
+}
+
+func itemIDs(items []store.Item) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.ID)
+	}
+	return out
 }
 
 // RenderLocalRules renders the eager "project rules" section for a set of local
