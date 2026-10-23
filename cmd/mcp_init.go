@@ -12,6 +12,7 @@ import (
 	"github.com/vieolo/contour/internal/config"
 	"github.com/vieolo/contour/internal/mcpconfig"
 	"github.com/vieolo/contour/internal/project"
+	"github.com/vieolo/contour/internal/store"
 	"github.com/vieolo/termange"
 	"github.com/vieolo/termange/tui"
 )
@@ -84,9 +85,10 @@ var mcpInitCmd = &cobra.Command{
 		//    touched, so a conflict leaves nothing half-done.
 		cfg, created, err := project.Ensure(cwd, mcpInitProfiles, detectEagerFiles(cwd))
 		if errors.Is(err, project.ErrProfileConflict) {
-			return fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+			def, _ := cfg.Select("")
+			return fmt.Errorf("%s already exists (default preset: bootstrap [%s]) and mcp-init never changes an existing project config — "+
 				"edit that file to switch profiles, or run without --bootstrap to just register contour on this machine",
-				cfg.Path, strings.Join(cfg.Bootstrap, ", "))
+				cfg.Path, strings.Join(def.Profiles, ", "))
 		}
 		if err != nil {
 			return err
@@ -111,28 +113,31 @@ var mcpInitCmd = &cobra.Command{
 			termange.PrintSuccessf("Added the %q server to %s\n", mcpInitName, mcpInitFile)
 		}
 		termange.PrintInfof("  command: %s\n", exe)
-		if created {
+		switch {
+		case created:
 			termange.PrintInfof("  config:  %s (created)\n", cfg.Path)
-		} else {
+		case cfg.Migrated:
+			termange.PrintInfof("  config:  %s (migrated to presets — review and commit it)\n", cfg.Path)
+		default:
 			termange.PrintInfof("  config:  %s (existing, left unchanged)\n", cfg.Path)
 		}
-		for _, p := range cfg.Bootstrap {
+		if len(cfg.Presets) > 1 {
+			termange.PrintInfof("  presets: %s\n", strings.Join(cfg.Names(), ", "))
+		}
+		def, _ := cfg.Select("")
+		for _, p := range def.Profiles {
 			termange.PrintInfof("  profile: %s\n", p)
 		}
-		for _, f := range cfg.EagerFiles {
+		for _, f := range def.Files {
 			termange.PrintInfof("  eager:   %s\n", f.ID)
 		}
 
-		if len(cfg.Bootstrap) == 0 {
-			termange.PrintWarningf("\nNo profile set — add `bootstrap: [<name>]` to %s (%s bootstrap lists them).\n", cfg.Path, config.Program)
-		} else if !created {
-			// The config came from the team, but the store is this machine's. A
-			// profile missing here makes the MCP server fail to start, so say so
-			// now, at setup, rather than when an agent first connects.
-			if err := checkProfilesExist(cfg.Bootstrap); err != nil {
-				termange.PrintWarningf("\nThis project's profiles are not all in your store: %v\n"+
-					"The MCP server will not start until they are.\n", err)
-			}
+		if len(def.Profiles) == 0 {
+			termange.PrintWarningf("\nThe default preset loads no profile — add `bootstrap: [<name>]` to it in %s (%s bootstrap lists them).\n",
+				cfg.Path, config.Program)
+		}
+		if !created {
+			warnMissingProfiles(cfg)
 		}
 		return nil
 	},
@@ -182,16 +187,17 @@ func pickProfiles(projectDir string) ([]string, error) {
 		return nil, err
 	}
 	if existing.Path != "" {
-		return nil, fmt.Errorf("%s already exists (bootstrap: [%s]) and mcp-init never changes an existing project config — "+
+		def, _ := existing.Select("")
+		return nil, fmt.Errorf("%s already exists (default preset: bootstrap [%s]) and mcp-init never changes an existing project config — "+
 			"run without --interactive to just register contour on this machine, or edit that file to switch profiles",
-			existing.Path, strings.Join(existing.Bootstrap, ", "))
+			existing.Path, strings.Join(def.Profiles, ", "))
 	}
 
 	home, err := resolveStore()
 	if err != nil {
 		return nil, err
 	}
-	profiles, err := bootstrap.LoadProfiles(home.Path)
+	profiles, err := bootstrap.LoadProfiles(profileSources(home.Path, store.DiscoverOverlays(projectDir)))
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +268,37 @@ func isTerminal(f *os.File) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
+// warnMissingProfiles tells a developer which of the profiles the project's
+// presets use cannot be found. The config came from the team, but the store is
+// this machine's; saying so at setup beats discovering it from a session that
+// quietly lacks some rules. Each preset is checked against what it may use, so
+// a access.central_store: false preset naming a central profile is caught too.
+func warnMissingProfiles(cfg project.Config) {
+	home, err := resolveStore()
+	if err != nil {
+		return
+	}
+	overlays := cwdOverlays()
+
+	var missing []string
+	for _, p := range cfg.Presets {
+		_, m, err := bootstrap.LoadAvailable(profileSources(presetCentral(home.Path, p), overlays), p.Profiles)
+		if err != nil {
+			return
+		}
+		for _, name := range m {
+			missing = append(missing, fmt.Sprintf("%s (preset %s)", name, p.Name))
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	termange.PrintWarningf("\nThese profiles cannot be found for the presets that use them: %s\n"+
+		"Sessions will start without their rules. A preset with access.central_store: false can use only the project's own "+
+		"profiles; any other needs the profile in the project or your store (%s bootstrap lists yours).\n",
+		strings.Join(missing, ", "), config.Program)
+}
+
 // checkProfilesExist rejects an unknown profile now rather than leaving the
 // agent to start a session with nothing loaded.
 func checkProfilesExist(names []string) error {
@@ -272,8 +309,19 @@ func checkProfilesExist(names []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := bootstrap.LoadNamed(home.Path, names); err != nil {
-		return withAvailableProfiles(home.Path, err)
+	src := profileSources(home.Path, cwdOverlays())
+	if _, err := bootstrap.LoadNamed(src, names); err != nil {
+		return withAvailableProfiles(src, err)
 	}
 	return nil
+}
+
+// cwdOverlays returns the working directory's overlays — the project's, since
+// mcp-init runs from its root.
+func cwdOverlays() []string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	return store.DiscoverOverlays(wd)
 }

@@ -25,36 +25,44 @@ type ItemProfiles struct {
 	Item store.Item
 
 	// Profiles are the names of the profiles that select this item, in the order
-	// the profiles were given. It is empty for a project-local item, which is
-	// delivered without being selected at all.
+	// the profiles were given. Project items are selected by tag like central
+	// ones; a preset with `startup.local_store: all` just does not need them to be.
 	Profiles []string
+
+	// alwaysActive records that the item is delivered without any profile
+	// selecting it; see AlwaysActive.
+	alwaysActive bool
 }
 
 // AlwaysActive reports whether the item is delivered irrespective of any
-// profile. Project-local items are: being local to the project is scope enough,
-// so they carry no tags and need no profile to select them.
+// profile: a file the project config lists by name, or a project item when
+// the project's presets include all of theirs (`startup.local_store: all`, the default).
 func (ip ItemProfiles) AlwaysActive() bool {
-	return ip.Item.Source == store.OriginLocal
+	return ip.alwaysActive
 }
 
 // Offered reports whether anything puts this item in front of an agent when a
-// session starts — either a profile selecting it, or its being local.
+// session starts — a profile selecting it, or its being always active.
 func (ip ItemProfiles) Offered() bool {
 	return len(ip.Profiles) > 0 || ip.AlwaysActive()
 }
 
 // CrossReference pairs every item in the store with the profiles that select it.
-func CrossReference(profiles []Profile, st *store.Store) CrossRef {
+//
+// localAlwaysActive says whether project items count as always active — true
+// when the project has no presets or some preset uses `startup.local_store: all`. A project
+// whose presets all use `startup.local_store: selected` gets its items only through profiles,
+// so for it an unselected project item is as unoffered as a central one.
+func CrossReference(profiles []Profile, st *store.Store, localAlwaysActive bool) CrossRef {
 	items := make([]ItemProfiles, 0, len(st.All()))
 	for _, it := range st.All() {
-		ip := ItemProfiles{Item: it}
-		// Local items are delivered unconditionally, so asking which profile
-		// selects one is not a meaningful question.
-		if it.Source == store.OriginStore {
-			for _, p := range profiles {
-				if selectsItem(p, it) {
-					ip.Profiles = append(ip.Profiles, p.Name)
-				}
+		ip := ItemProfiles{
+			Item:         it,
+			alwaysActive: it.Pinned || (it.Source == store.OriginLocal && localAlwaysActive),
+		}
+		for _, p := range profiles {
+			if selectsItem(p, it) {
+				ip.Profiles = append(ip.Profiles, p.Name)
 			}
 		}
 		items = append(items, ip)

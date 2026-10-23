@@ -49,7 +49,8 @@ const noticeReserve = 640
 
 // Options configures the server.
 type Options struct {
-	// Root is the contour store's directory.
+	// Root is the central store's directory. Empty leaves the central store
+	// out of the session — a preset with access.central_store: false.
 	Root string
 
 	// Overlays are the project-local directories layered over the store, whose
@@ -61,29 +62,39 @@ type Options struct {
 	EagerFiles []store.EagerFile
 
 	// Profiles are the bootstrap profiles loaded eagerly, composed in order.
-	// When empty no central rules are preloaded (local overlay rules still are),
-	// and the instructions explain how to select an entry point.
+	// They are looked up in the project's overlays first, then the central
+	// store. When empty no profile rules are preloaded, and the instructions
+	// explain where profiles are chosen.
 	Profiles []string
 
-	// Version is reported to clients during initialisation.
-	Version string
+	// SelectedLocal offers only the project items the profiles select, plus
+	// the eager files — a preset's `startup.local_store: selected`. The zero value includes
+	// every project item, the default, so a caller that never heard of the
+	// setting cannot drop a project's rules by leaving it out.
+	SelectedLocal bool
+
+	// Notices are things the agent should know about how the session was set
+	// up — a requested preset that does not exist, say. Each is a paragraph,
+	// placed right after the opening lines, where a client that caps the
+	// instructions cannot cut it.
+	Notices []string
+
+	// Preset is the preset the session started with, and Presets all of the
+	// project's presets; the others are listed for the agent to load.
+	Preset  string
+	Presets []PresetSummary
 }
 
-// New builds the server with the bootstrap payload as its initialisation
-// instructions. The caller registers tools before serving.
-func New(opts Options) (*mcp.Server, error) {
-	instructions, err := BuildInstructions(opts)
-	if err != nil {
-		return nil, err
-	}
-
+// New builds the server with the given initialisation instructions — normally
+// BuildInstructions' Text. The caller registers tools before serving.
+func New(instructions, version string) *mcp.Server {
 	return mcp.NewServer(&mcp.Implementation{
 		Name:    "contour",
 		Title:   "contour context provider",
-		Version: opts.Version,
+		Version: version,
 	}, &mcp.ServerOptions{
 		Instructions: instructions,
-	}), nil
+	})
 }
 
 // Serve runs the server on stdio, blocking until the client disconnects or ctx
@@ -114,73 +125,209 @@ func TextResult(text, fallback string) *mcp.CallToolResult {
 	}
 }
 
+// Instructions are what the client receives at initialisation.
+type Instructions struct {
+	// Text is the instructions themselves.
+	Text string
+
+	// RuleIDs are the rules whose full bodies Text carries. They stay in the
+	// agent's context for the whole session — unlike a tool result, which a
+	// client may compact away — so loading a preset later need not repeat
+	// them.
+	RuleIDs []string
+}
+
 // BuildInstructions composes what the client receives at initialisation: a short
-// preamble, the profile's eager rules, and menus of what can be fetched.
-func BuildInstructions(opts Options) (string, error) {
+// preamble, any notices, the project's other presets, the session's eager rules,
+// and menus of what can be fetched.
+func BuildInstructions(opts Options) (Instructions, error) {
 	st, err := store.LoadProject(opts.Root, opts.Overlays, opts.EagerFiles)
 	if err != nil {
-		return "", err
+		return Instructions{}, err
 	}
 
 	var b strings.Builder
 	b.WriteString(intro)
+	for _, n := range opts.Notices {
+		b.WriteString(strings.TrimSpace(n))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(presetsSection(opts.Preset, opts.Presets))
 
+	sources := bootstrap.Sources{Central: opts.Root, Overlays: opts.Overlays}
 	if len(opts.Profiles) == 0 {
-		writeNoProfileNotice(&b, opts.Root)
-		return noProfileInstructions(b.String(), st), nil
+		writeNoProfileNotice(&b, sources)
+		return noProfileInstructions(b.String(), st, !opts.SelectedLocal), nil
 	}
 
-	profiles, err := bootstrap.LoadNamed(opts.Root, opts.Profiles)
+	profiles, missing, err := bootstrap.LoadAvailable(sources, opts.Profiles)
 	if err != nil {
-		return "", err
+		return Instructions{}, err
 	}
-	composed := bootstrap.Compose(profiles, st)
+	b.WriteString(MissingProfilesNotice(missing, opts.Root != ""))
+	if len(profiles) == 0 {
+		// Every profile the project asked for is missing. Serve the session as
+		// if none had been selected — local rules eager, the whole store on the
+		// menu — rather than an empty one.
+		return noProfileInstructions(b.String(), st, !opts.SelectedLocal), nil
+	}
+	composed := bootstrap.Compose(profiles, st, !opts.SelectedLocal)
 
 	// Try the whole payload first; only if it will not fit does the notice cost
 	// anything, so a store within budget is delivered exactly as before.
-	avail := InstructionsBudget - len(intro)
+	avail := InstructionsBudget - b.Len()
 	ex := composed.RenderWithin(avail, FetchHint)
 	if ex.Complete {
 		b.WriteString(ex.Body)
-		return b.String(), nil
+		return Instructions{Text: b.String(), RuleIDs: ex.ShownIDs}, nil
 	}
 
 	ex = composed.RenderWithin(avail-noticeReserve, FetchHint)
 	b.WriteString(excerptNotice(ex))
 	b.WriteString(ex.Body)
 	b.WriteString(excerptCloser(ex))
-	return b.String(), nil
+	return Instructions{Text: b.String(), RuleIDs: ex.ShownIDs}, nil
 }
 
-// noProfileInstructions builds the instructions for a session with no central
-// profile. Local project rules still load eagerly, so this path carries real
-// eager content and is budgeted like any other — a project adopting contour with
-// local rules alone must not lose them silently either.
+// PresetSummary is what the instructions say about one of the project's presets.
+type PresetSummary struct {
+	Name        string
+	Description string
+}
+
+// presetsSection lists the project's presets other than the one the session
+// started with, so the agent knows what it can load and when. It renders as the
+// empty string when there are none.
+//
+// It sits near the top, with the notices, rather than with the menus at the end:
+// in a project set up around a light default, these are the main way into the
+// rest of its context, and the menus are the first thing a long payload drops.
+func presetsSection(current string, presets []PresetSummary) string {
+	var others []PresetSummary
+	for _, p := range presets {
+		if p.Name != current {
+			others = append(others, p)
+		}
+	}
+	if len(others) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("# Presets\n\n")
+	fmt.Fprintf(&b, "This session started with the %q preset. The project defines others, each a starting point for "+
+		"one part of it. Load one with the `bootstrap` tool, passing its name as `preset`, when the user asks for it "+
+		"or the work is clearly about it:\n\n", current)
+	for _, p := range others {
+		if p.Description != "" {
+			fmt.Fprintf(&b, "- %s — %s\n", p.Name, p.Description)
+		} else {
+			fmt.Fprintf(&b, "- %s\n", p.Name)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// noProfileInstructions builds the instructions for a session with no profile.
+// The project's rules still load eagerly — all of them, or with allLocal off,
+// just its eager files — so this path carries real eager content and is
+// budgeted like any other: a project adopting contour with local rules alone
+// must not lose them silently either.
 //
 // Menus go first when space runs short: the list tool reproduces them on demand,
 // whereas a local rule body has no other eager route to the agent.
-func noProfileInstructions(head string, st *store.Store) string {
-	localRules := st.BySource(store.KindRules, store.OriginLocal)
-	// Central rules aren't eager here, but they remain fetchable, so list them
-	// alongside the on-demand skills and knowledge.
+func noProfileInstructions(head string, st *store.Store, allLocal bool) Instructions {
+	// The project's rules are eager — all of them, or under startup.local_store: selected
+	// only the files the config names, since with no profile nothing else is
+	// selected.
+	var localRules []store.Item
+	for _, it := range st.BySource(store.KindRules, store.OriginLocal) {
+		if allLocal || it.Pinned {
+			localRules = append(localRules, it)
+		}
+	}
+
+	// Central rules aren't eager here, but they remain fetchable, so they join
+	// the menu alongside the on-demand skills and knowledge. Under local:
+	// selected the project's unselected items stay off the menus too: a menu
+	// line is startup context as much as a rule is, and keeping a large local
+	// store out of it is what the setting is for. They stay reachable through
+	// list, search and get.
+	menuItems := func(kind store.Kind) []store.Item {
+		if allLocal {
+			return st.ByKind(kind)
+		}
+		return st.BySource(kind, store.OriginStore)
+	}
 	menus := bootstrap.RenderMenu("Available rules", st.BySource(store.KindRules, store.OriginStore), FetchHint) +
-		bootstrap.RenderMenu("Available skills", st.ByKind(store.KindSkills), FetchHint) +
-		bootstrap.RenderMenu("Available knowledge", st.ByKind(store.KindKnowledge), FetchHint)
+		bootstrap.RenderMenu("Available skills", menuItems(store.KindSkills), FetchHint) +
+		bootstrap.RenderMenu("Available knowledge", menuItems(store.KindKnowledge), FetchHint)
 
 	// Only the local rules are eager, so they are the whole budgeted payload.
 	local := bootstrap.Composed{Rules: localRules}
-	if full := local.RenderWithin(0, FetchHint); len(head)+len(full.Body)+len(menus) <= InstructionsBudget {
-		return strings.TrimRight(head+full.Body+menus, "\n") + "\n"
+	if full := local.RenderWithin(0, FetchHint); len(head)+len(full.Body)+len(menus)+1 <= InstructionsBudget {
+		return Instructions{Text: strings.TrimRight(head+joinBlocks(full.Body, menus), "\n") + "\n", RuleIDs: full.ShownIDs}
 	}
 
 	// Menus dropped. If the local rules alone still overrun, excerpt them and say so.
 	avail := InstructionsBudget - len(head)
 	if ex := local.RenderWithin(avail, FetchHint); ex.Complete {
-		return strings.TrimRight(head+ex.Body, "\n") + "\n" +
-			"\nThe skills and knowledge menus were omitted for length — use the `list` tool to see them.\n"
+		return Instructions{
+			Text: strings.TrimRight(head+ex.Body, "\n") + "\n" +
+				"\nThe skills and knowledge menus were omitted for length — use the `list` tool to see them.\n",
+			RuleIDs: ex.ShownIDs,
+		}
 	}
 	ex := local.RenderWithin(avail-noticeReserve, FetchHint)
-	return strings.TrimRight(head+excerptNotice(ex)+ex.Body+excerptCloser(ex), "\n") + "\n"
+	return Instructions{
+		Text:    strings.TrimRight(head+excerptNotice(ex)+ex.Body+excerptCloser(ex), "\n") + "\n",
+		RuleIDs: ex.ShownIDs,
+	}
+}
+
+// joinBlocks joins two markdown blocks with a blank line between them. A
+// rendered payload ends in a single newline, so concatenating the next section
+// straight on would run its heading into the last line of text.
+func joinBlocks(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	return strings.TrimRight(a, "\n") + "\n\n" + b
+}
+
+// MissingProfilesNotice tells the agent which of the preset's profiles could not
+// be found, and so were not loaded. It renders as the empty string when none
+// are missing.
+//
+// centralUsed says whether the preset looks in the central store at all, and
+// changes what the notice says is wrong. With it, the profile is simply in
+// neither place, and the developer adds it. Without it — access.central_store: false — the
+// profile may well be in their store, but this preset is not allowed to use it,
+// so the fix is to make it a project profile; telling them it does not exist
+// would send them looking for the wrong problem.
+//
+// The agent is asked to pass it on because the developer is the only one who
+// can fix it, and nothing else would tell them: the session otherwise looks
+// healthy, just quietly missing some of the rules the project relies on. It
+// goes near the top of the instructions, where a client that caps them cannot
+// cut it.
+func MissingProfilesNotice(missing []string, centralUsed bool) string {
+	if len(missing) == 0 {
+		return ""
+	}
+	names := strings.Join(missing, ", ")
+	n := len(missing)
+	if !centralUsed {
+		return fmt.Sprintf("NOTE: this preset uses the bootstrap %s %s, which %s not among this project's own profiles. "+
+			"The preset uses the project's local store only (access.central_store: false), so a profile from the central store "+
+			"is not loaded even if it exists there. Mention this to the user so they can add %s to the project.\n\n",
+			plural(n, "profile", "profiles"), names, plural(n, "is", "are"), plural(n, "it", "them"))
+	}
+	return fmt.Sprintf("NOTE: this project uses the bootstrap %s %s, which %s in neither the project nor this "+
+		"machine's contour store, so %s rules are not loaded. Mention this to the user so they can add %s.\n\n",
+		plural(n, "profile", "profiles"), names, plural(n, "is", "are"),
+		plural(n, "its", "their"), plural(n, "it", "them"))
 }
 
 // intro opens the instructions. It states that the rules are binding before any
@@ -244,13 +391,13 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// writeNoProfileNotice explains how to select an entry point when the server was
-// started without one, naming the profiles that exist.
-func writeNoProfileNotice(b *strings.Builder, root string) {
-	b.WriteString("No bootstrap profile is selected, so no rules were loaded eagerly.\n")
-	b.WriteString("Select one or more by passing --bootstrap <name> when starting the server.\n")
+// writeNoProfileNotice explains where profiles are chosen when the session has
+// none, naming the profiles that exist.
+func writeNoProfileNotice(b *strings.Builder, src bootstrap.Sources) {
+	b.WriteString("No bootstrap profile is selected, so no profile rules were loaded eagerly.\n")
+	b.WriteString("Profiles are chosen by the presets in the project's contour config.\n")
 
-	profiles, err := bootstrap.LoadProfiles(root)
+	profiles, err := bootstrap.LoadProfiles(src)
 	if err != nil || len(profiles) == 0 {
 		b.WriteString("\n")
 		return

@@ -21,7 +21,7 @@ func crossRefOf(t *testing.T, cov CrossRef) map[string]ItemProfiles {
 
 func TestCrossReferenceNamesSelectingProfiles(t *testing.T) {
 	root := testRoot(t)
-	profiles, err := LoadProfiles(root)
+	profiles, err := LoadProfiles(CentralOnly(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestCrossReferenceNamesSelectingProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	byID := crossRefOf(t, CrossReference(profiles, st))
+	byID := crossRefOf(t, CrossReference(profiles, st, true))
 
 	// LoadProfiles orders by name: empty, python, python-frontend. Both python
 	// profiles select the "general" and "python" rule tags.
@@ -62,7 +62,7 @@ func TestCrossReferenceAgreesWithCompose(t *testing.T) {
 	write(t, root, "bootstrap/js.md",
 		"---\ndescription: JS\nrules: [js]\nskills: [python]\nknowledge: [general]\n---\n")
 
-	profiles, err := LoadProfiles(root)
+	profiles, err := LoadProfiles(CentralOnly(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestCrossReferenceAgreesWithCompose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cov := CrossReference(profiles, st)
+	cov := CrossReference(profiles, st, true)
 
 	for _, p := range profiles {
 		// What the cross-reference credits to this profile.
@@ -85,7 +85,7 @@ func TestCrossReferenceAgreesWithCompose(t *testing.T) {
 
 		// What composing this profile alone actually delivers, central items only
 		// (local items are delivered without being selected).
-		c := Compose([]Profile{p}, st)
+		c := Compose([]Profile{p}, st, true)
 		var delivered []string
 		for _, group := range [][]store.Item{c.Rules, c.Skills, c.Knowledge} {
 			for _, it := range group {
@@ -111,7 +111,7 @@ func TestCrossReferenceLocalItemsAreAlwaysActive(t *testing.T) {
 	write(t, root, ".contour/rules/project-conventions.md",
 		"---\ndescription: local\ntags: [unrelated]\n---\nlocal body")
 
-	profiles, err := LoadProfiles(root)
+	profiles, err := LoadProfiles(CentralOnly(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestCrossReferenceLocalItemsAreAlwaysActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	local := crossRefOf(t, CrossReference(profiles, st))["rules/project-conventions"]
+	local := crossRefOf(t, CrossReference(profiles, st, true))["rules/project-conventions"]
 	if !local.AlwaysActive() {
 		t.Error("a local item is not reported as always active")
 	}
@@ -131,7 +131,7 @@ func TestCrossReferenceLocalItemsAreAlwaysActive(t *testing.T) {
 		t.Errorf("a local item was credited to profiles %v", local.Profiles)
 	}
 
-	for _, ip := range CrossReference(profiles, st).Unoffered() {
+	for _, ip := range CrossReference(profiles, st, true).Unoffered() {
 		if ip.Item.ID == "rules/project-conventions" {
 			t.Error("a local item was listed as offered by nothing")
 		}
@@ -140,7 +140,7 @@ func TestCrossReferenceLocalItemsAreAlwaysActive(t *testing.T) {
 
 func TestCoverageUnoffered(t *testing.T) {
 	root := testRoot(t)
-	profiles, err := LoadProfiles(root)
+	profiles, err := LoadProfiles(CentralOnly(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestCoverageUnoffered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := ids2(CrossReference(profiles, st).Unoffered()); !reflect.DeepEqual(got, []string{"rules/js/010-style"}) {
+	if got := ids2(CrossReference(profiles, st, true).Unoffered()); !reflect.DeepEqual(got, []string{"rules/js/010-style"}) {
 		t.Errorf("Unoffered() = %v, want [rules/js/010-style]", got)
 	}
 }
@@ -164,7 +164,7 @@ func TestCrossReferenceNoProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cov := CrossReference(nil, st)
+	cov := CrossReference(nil, st, true)
 
 	if got := ids2(cov.Unoffered()); !reflect.DeepEqual(got, []string{"rules/general/010-comm"}) {
 		t.Errorf("Unoffered() = %v, want the one item", got)
@@ -173,7 +173,7 @@ func TestCrossReferenceNoProfiles(t *testing.T) {
 
 func TestCoverageByKind(t *testing.T) {
 	root := testRoot(t)
-	profiles, err := LoadProfiles(root)
+	profiles, err := LoadProfiles(CentralOnly(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestCoverageByKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cov := CrossReference(profiles, st)
+	cov := CrossReference(profiles, st, true)
 
 	for _, k := range store.Kinds {
 		for _, ip := range cov.ByKind(k) {
