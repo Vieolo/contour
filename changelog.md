@@ -1,11 +1,28 @@
 # Change Log
 
+## v0.3.0 (2026-10-23)
+- Projects can define their own profiles in `.agents/bootstrap/`, overriding central profiles of the same name
+- Profiles now select the project's own items by tag, and folder names are tags
+- Ask the agent to load another preset mid-session; it is added without repeating rules already in effect
+- `startup.local_store: selected` starts a session with only the project items its profiles select
+- `access.central_store: false` keeps your central store out of the agent's session entirely
+- A missing profile or preset no longer stops the MCP server; the agent is told instead
+- `contour bootstrap --preset <name>` prints a preset's payload, and `contour bootstrap` lists the project's presets
+- `contour list --profiles` shows which profiles select each project item
+- `contour init --local` also creates a `bootstrap/` folder
+- Unknown keys in the project config are reported instead of being silently ignored
+
+#### Breaking Changes
+- The project config is now organised into named **presets**, each with `startup` (`profiles`, `files`, `local_store`) and `access` (`central_store`) settings. Sessions start with the `default` preset, or with the one passed to `contour mcp --preset <name>`
+- 0.2 configs are migrated automatically on first run: `bootstrap` and `eager_files` become the `default` preset. Review and commit the rewritten file (in a `go.yaml`, blank lines are lost)
+- `contour mcp --bootstrap` now replaces only the preset's profiles, keeping the rest of the preset
+
 ## v0.2.5 (2026-10-17)
 - `contour init` no longer regenerates sample files in an existing store
-- `congour init` now accepts a `--local` flag. Passing this flag will generate a scaffold in `.agents` folder with `rules`, `skills`, and `knowledge` for a specific project. It will not override your existing files in `.agents` folder
+- `contour init` now accepts a `--local` flag. Passing this flag will generate a scaffold in `.agents` folder with `rules`, `skills`, and `knowledge` for a specific project. It will not override your existing files in `.agents` folder
 - The bug is fixed where running `contour mcp-init` while having an existing config used to wipe the existing values
 - `contour mcp-init` now has an interactive flag (`-i` or `--interactive`) which shows a multi-select TUI, allowing you to select one or more of the bootstrap profile
-- The README no longer advises committing `.mcp.json` as itt records the absolute path of the contour binary, which differs between machines
+- The README no longer advises committing `.mcp.json` as it records the absolute path of the contour binary, which differs between machines
 
 ## v0.2.4 (2026-07-30)
 - A Go project that keeps a `go.yaml` can hold contour's per-project settings in its `external.contour` section instead of a separate `.contour.yaml`. The fields are unchanged. `contour mcp-init` detects an existing `go.yaml` and writes there, preserving the rest of the file. `.contour.yaml` takes precedence over any such host manifest
