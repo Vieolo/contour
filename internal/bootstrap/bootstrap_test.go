@@ -49,7 +49,7 @@ func testRoot(t *testing.T) string {
 
 func compose(t *testing.T, root string, names ...string) Composed {
 	t.Helper()
-	profiles, err := LoadNamed(root, names)
+	profiles, err := LoadNamed(CentralOnly(root), names)
 	if err != nil {
 		t.Fatalf("LoadNamed(%v): %v", names, err)
 	}
@@ -57,13 +57,13 @@ func compose(t *testing.T, root string, names ...string) Composed {
 	if err != nil {
 		t.Fatalf("store.Load: %v", err)
 	}
-	return Compose(profiles, st)
+	return Compose(profiles, st, true)
 }
 
 func TestLoadProfile(t *testing.T) {
 	root := testRoot(t)
 
-	p, err := LoadProfile(root, "python")
+	p, err := LoadProfile(CentralOnly(root), "python")
 	if err != nil {
 		t.Fatalf("LoadProfile: %v", err)
 	}
@@ -85,13 +85,13 @@ func TestLoadProfile(t *testing.T) {
 }
 
 func TestLoadProfileMissing(t *testing.T) {
-	if _, err := LoadProfile(testRoot(t), "nope"); err == nil {
+	if _, err := LoadProfile(CentralOnly(testRoot(t)), "nope"); err == nil {
 		t.Error("LoadProfile returned nil error for a missing profile")
 	}
 }
 
 func TestLoadProfiles(t *testing.T) {
-	ps, err := LoadProfiles(testRoot(t))
+	ps, err := LoadProfiles(CentralOnly(testRoot(t)))
 	if err != nil {
 		t.Fatalf("LoadProfiles: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestLoadProfiles(t *testing.T) {
 }
 
 func TestLoadProfilesNoDir(t *testing.T) {
-	ps, err := LoadProfiles(t.TempDir())
+	ps, err := LoadProfiles(CentralOnly(t.TempDir()))
 	if err != nil {
 		t.Fatalf("LoadProfiles: %v", err)
 	}
@@ -236,11 +236,11 @@ func TestLoadNamedFailsOnAnyMissingProfile(t *testing.T) {
 
 	// The first name is valid, so a partial result would be easy to return by
 	// accident — and would compose an entry point quietly missing a slice.
-	if _, err := LoadNamed(root, []string{"python", "nope"}); err == nil {
+	if _, err := LoadNamed(CentralOnly(root), []string{"python", "nope"}); err == nil {
 		t.Error("LoadNamed returned nil error for a missing profile")
 	}
 
-	profiles, err := LoadNamed(root, []string{"python", "empty"})
+	profiles, err := LoadNamed(CentralOnly(root), []string{"python", "empty"})
 	if err != nil {
 		t.Fatalf("LoadNamed: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestComposeIncludesLocalUnconditionally(t *testing.T) {
 	write(t, root, ".contour/rules/project-conventions.md", "---\ndescription: local rule\ntags: [unrelated]\n---\nlocal body")
 	write(t, root, ".contour/skills/deploy/SKILL.md", "---\ndescription: local skill\n---\nsteps")
 
-	p, err := LoadProfile(root, "python")
+	p, err := LoadProfile(CentralOnly(root), "python")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestComposeIncludesLocalUnconditionally(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := Compose([]Profile{p}, st)
+	c := Compose([]Profile{p}, st, true)
 
 	if !hasID(c.Rules, "rules/project-conventions") {
 		t.Errorf("local rule missing from eager rules: %v", ids(c.Rules))
@@ -409,7 +409,7 @@ func TestRenderWithinPrefersLocalRules(t *testing.T) {
 	write(t, root, ".contour/rules/010-local.md",
 		"---\ndescription: local\n---\nAlways use the project logger.")
 
-	p, err := LoadProfile(root, "python")
+	p, err := LoadProfile(CentralOnly(root), "python")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestRenderWithinPrefersLocalRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex := Compose([]Profile{p}, st).RenderWithin(700, "get <id>")
+	ex := Compose([]Profile{p}, st, true).RenderWithin(700, "get <id>")
 
 	if ex.Complete {
 		t.Fatal("expected an excerpt")
@@ -475,5 +475,74 @@ func TestRenderWithinTinyBudget(t *testing.T) {
 	}
 	if strings.Contains(ex.Body, "Wrap every error") {
 		t.Error("a rule body leaked into an excerpt that cannot hold one")
+	}
+}
+
+// LoadAvailable serves what exists and reports what does not, in the order
+// asked — the order decides how the profiles compose.
+func TestLoadAvailableReportsMissingProfiles(t *testing.T) {
+	root := testRoot(t)
+
+	profiles, missing, err := LoadAvailable(CentralOnly(root), []string{"nope", "python", "gone", "empty"})
+	if err != nil {
+		t.Fatalf("LoadAvailable: %v", err)
+	}
+	var names []string
+	for _, p := range profiles {
+		names = append(names, p.Name)
+	}
+	if want := []string{"python", "empty"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("loaded %v, want %v", names, want)
+	}
+	if want := []string{"nope", "gone"}; !reflect.DeepEqual(missing, want) {
+		t.Errorf("missing = %v, want %v", missing, want)
+	}
+}
+
+// Missing is ordinary; broken is not. A profile that exists but cannot be
+// parsed must still fail loudly rather than be quietly skipped.
+func TestLoadAvailableFailsOnABrokenProfile(t *testing.T) {
+	root := testRoot(t)
+	write(t, root, "bootstrap/broken.md", "---\nrules: [unclosed\n---\n")
+
+	if _, _, err := LoadAvailable(CentralOnly(root), []string{"broken"}); err == nil {
+		t.Error("LoadAvailable skipped a profile that exists but cannot be parsed")
+	}
+}
+
+// Loading a preset part-way through a session leaves out the rules the agent
+// already has, says which, and keeps the menus whole.
+func TestRenderSkippingLeavesOutDeliveredRulesOnly(t *testing.T) {
+	c := compose(t, testRoot(t), "python")
+
+	body, skipped := c.RenderSkipping(func(id string) bool { return id == "rules/general/010-comm" }, "get <id>")
+
+	if !reflect.DeepEqual(skipped, []string{"rules/general/010-comm"}) {
+		t.Errorf("skipped = %v", skipped)
+	}
+	if strings.Contains(body, "Be concise.") {
+		t.Error("a skipped rule's body was rendered")
+	}
+	for _, want := range []string{"Wrap errors.", "Shared rule.", "- skills/python/release", "- knowledge/general/stack"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// ShownIDs names what an excerpt actually carries — nothing more.
+func TestRenderWithinReportsShownIDs(t *testing.T) {
+	c := compose(t, bigRoot(t), "python")
+	ex := c.RenderWithin(900, "get <id>")
+	if len(ex.ShownIDs) != ex.ShownRules {
+		t.Fatalf("ShownIDs has %d entries, ShownRules says %d", len(ex.ShownIDs), ex.ShownRules)
+	}
+	for _, id := range ex.ShownIDs {
+		if !strings.Contains(ex.Body, "## "+id) {
+			t.Errorf("ShownIDs claims %q, which the body does not show", id)
+		}
+	}
+	if full := c.RenderWithin(0, "get <id>"); len(full.ShownIDs) != len(c.Rules) {
+		t.Errorf("a complete render shows %d IDs, want all %d", len(full.ShownIDs), len(c.Rules))
 	}
 }

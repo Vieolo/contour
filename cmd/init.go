@@ -27,7 +27,7 @@ var initCmd = &cobra.Command{
 		"comes back, and nothing is overwritten.\n\n" +
 		"With --local, it creates a store for the project in the working " +
 		"directory instead: a " + store.DefaultOverlayDir + "/ folder holding " +
-		"rules/, skills/ and knowledge/, which contour merges over the central " +
+		"bootstrap/, rules/, skills/ and knowledge/, which contour merges over the central " +
 		"store whenever it runs in this project. Everything put there is live " +
 		"at once — local rules load into every session, no profile needed — so " +
 		"it gets no sample files, only a README documenting the formats. A " +
@@ -102,7 +102,8 @@ func runInitLocal() error {
 	}
 
 	termange.PrintSuccessf("Created a local store at %s\n", shown)
-	termange.PrintInfof("  rules/       loaded eagerly into every session in this project\n")
+	termange.PrintInfof("  bootstrap/   this project's own profiles, for its presets to name\n")
+	termange.PrintInfof("  rules/       loaded eagerly into sessions in this project\n")
 	termange.PrintInfof("  skills/      listed on the menu, fetched when relevant\n")
 	termange.PrintInfof("  knowledge/   listed on the menu, fetched when relevant\n")
 	termange.PrintInfof("\nAnything you add is live at once — no profile needed. %s/README.md covers the formats.\n", shown)

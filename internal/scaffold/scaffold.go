@@ -63,8 +63,8 @@ const gitKeep = ".gitkeep"
 // overlay in effect and whether this call created it.
 //
 // A project that already has one is left as it is, and its overlay returned.
-// "Already has one" means any recognised overlay folder holding a rules/,
-// skills/ or knowledge/ directory. It cannot mean "the folder exists": .agents/
+// "Already has one" means any recognised overlay folder holding a bootstrap/,
+// rules/, skills/ or knowledge/ directory. It cannot mean "the folder exists": .agents/
 // and .claude/ are shared with other tools, so their presence says nothing
 // about contour. For the same reason, scaffolding into an existing .agents/
 // never overwrites a file another tool put there.
@@ -78,16 +78,16 @@ const gitKeep = ".gitkeep"
 func CreateLocal(projectDir string) (string, bool, error) {
 	for _, name := range store.OverlayDirNames {
 		overlay := filepath.Join(projectDir, name)
-		for _, k := range store.Kinds {
-			if info, err := os.Stat(filepath.Join(overlay, string(k))); err == nil && info.IsDir() {
+		for _, dir := range localDirs() {
+			if info, err := os.Stat(filepath.Join(overlay, dir)); err == nil && info.IsDir() {
 				return overlay, false, nil
 			}
 		}
 	}
 
 	overlay := filepath.Join(projectDir, store.DefaultOverlayDir)
-	for _, k := range store.Kinds {
-		if err := writeIfAbsent(filepath.Join(overlay, string(k), gitKeep), ""); err != nil {
+	for _, dir := range localDirs() {
+		if err := writeIfAbsent(filepath.Join(overlay, dir, gitKeep), ""); err != nil {
 			return "", false, err
 		}
 	}
@@ -95,6 +95,16 @@ func CreateLocal(projectDir string) (string, bool, error) {
 		return "", false, err
 	}
 	return overlay, true, nil
+}
+
+// localDirs are the folders a local store holds: the three kinds, and the
+// project's own bootstrap profiles.
+func localDirs() []string {
+	dirs := []string{store.BootstrapDir}
+	for _, k := range store.Kinds {
+		dirs = append(dirs, string(k))
+	}
+	return dirs
 }
 
 // HasContent reports whether path exists and holds anything at all. A path that

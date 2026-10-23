@@ -1,5 +1,7 @@
-// Package project reads a project's contour config — which central bootstrap
-// profiles to load, and which single files to load eagerly.
+// Package project reads a project's contour config: its presets — named
+// starting points for an agent session. Each says what a session starts with
+// (profiles, files, how much of the project's own store) and what it may reach
+// at all (whether your central store is in play).
 //
 // The config lives at the project root, not inside an overlay folder, for the
 // same reason the machine-wide config lives outside the store: settings must not
@@ -45,19 +47,121 @@ const (
 	// named section under `external`, so contour's settings live at
 	// external.contour and cannot collide with another tool's.
 	ExternalKey = "contour"
+
+	// DefaultPreset is the preset a session starts with when none is named. It is
+	// the only reserved preset name.
+	DefaultPreset = "default"
 )
+
+// LocalMode says which of the project's own items a session starts with — the
+// value of startup.local_store.
+type LocalMode string
+
+const (
+	// LocalAll starts with every project item: local rules load eagerly, and
+	// local skills and knowledge join the menu. Being local is scope enough.
+	LocalAll LocalMode = "all"
+
+	// LocalSelected starts with only the project items the preset's profiles
+	// select by tag, as central items are. The rest stay reachable through
+	// list, search and get: this governs what a session starts with, not what
+	// it can reach.
+	LocalSelected LocalMode = "selected"
+)
+
+// Preset is a named starting point for an agent session in this project.
+//
+// Its fields mirror the config's two groups. startup is what a session begins
+// with; access is what it may reach at all. The split is real, not cosmetic:
+// the project's own items are always reachable, so there is a startup setting
+// for them but no access one, while the central store can be put out of reach
+// entirely. Field names follow the config's leaf names, so startup.local_store
+// greps to LocalStore.
+type Preset struct {
+	Name        string
+	Description string
+
+	// Profiles (startup.profiles) load eagerly, in the order they compose.
+	Profiles []string
+
+	// Files (startup.files) are project files loaded eagerly as local rules,
+	// resolved to absolute paths.
+	Files []store.EagerFile
+
+	// LocalStore (startup.local_store) says which project items the session
+	// starts with. Never empty once loaded.
+	LocalStore LocalMode
+
+	// CentralStore (access.central_store) reports whether the preset may use
+	// the central store at all.
+	CentralStore bool
+}
+
+// Config is a project's contour config.
+type Config struct {
+	// Presets are the project's presets, in the order the file lists them.
+	Presets []Preset
+
+	// Path is the config file that was read, or empty if none was found.
+	Path string
+
+	// Migrated reports that the file at Path was in the pre-preset shape and
+	// this load rewrote it as presets.
+	Migrated bool
+
+	// Warnings describe things worth telling the user that do not stop contour
+	// from working: a second config file shadowed by the one in effect, a
+	// go.yaml that could not be read, a key contour does not recognise, or a
+	// config just migrated to presets. They are reported rather than returned as
+	// errors, because refusing to run would be worse than saying so.
+	Warnings []string
+}
+
+// Preset returns the preset with the given name.
+func (c Config) Preset(name string) (Preset, bool) {
+	for _, p := range c.Presets {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Preset{}, false
+}
+
+// Select returns the preset a session uses: the named one, or default when the
+// name is empty, reporting whether it exists. When it does not, the result is a
+// blank preset — no profiles, no files, the default settings — which is what a
+// project without a config has always had.
+func (c Config) Select(name string) (Preset, bool) {
+	if name == "" {
+		name = DefaultPreset
+	}
+	if p, ok := c.Preset(name); ok {
+		return p, true
+	}
+	return Preset{Name: name, LocalStore: LocalAll, CentralStore: true}, false
+}
+
+// Names returns the presets' names in file order.
+func (c Config) Names() []string {
+	out := make([]string, 0, len(c.Presets))
+	for _, p := range c.Presets {
+		out = append(out, p.Name)
+	}
+	return out
+}
 
 // host is a project manifest that can carry contour's settings in a section of
 // its own, so a project need not add a dedicated config file for them.
 //
-// read reports whether the file holds a contour section at all — a project keeps
-// its manifest for reasons of its own, and a bare one must not be mistaken for a
-// contour config. write assumes the file exists; both are given its full path.
+// read returns the section's raw node and reports whether the file holds a
+// contour section at all — a project keeps its manifest for reasons of its own,
+// and a bare one must not be mistaken for a contour config. write replaces the
+// section; it assumes the file exists. Both are given the file's full path.
 type host struct {
 	Name    string
 	Section string // where the settings live, for messages
-	read    func(path string) (file, bool, error)
-	write   func(path string, bootstrap, eagerFiles []string) error
+	read    func(path string) (*yaml.Node, bool, error)
+	write   func(path string, body *yaml.Node) error
 }
 
 // hosts are the manifests contour can read its settings from, in the order they
@@ -71,36 +175,42 @@ var hosts = []host{{
 	write:   writeGoYAML,
 }}
 
-// Config is a project's contour config.
-type Config struct {
-	// Bootstrap lists the central profiles to load eagerly, in the order they
-	// should compose, unless the --bootstrap flag overrides them.
-	Bootstrap []string
-
-	// EagerFiles are files to load eagerly as local rules, resolved to absolute
-	// paths.
-	EagerFiles []store.EagerFile
-
-	// Path is the config file that was read, or empty if none was found.
-	Path string
-
-	// Warnings describe config that was found but not used — a second config
-	// file shadowed by the one in effect, or a go.yaml that could not be read.
-	// They are reported to the user rather than returned as errors: contour
-	// still has a usable config, and refusing to run because an unrelated file
-	// is malformed would be worse than saying so and carrying on.
-	Warnings []string
+// presetFile is the YAML schema of one preset.
+type presetFile struct {
+	Description string      `yaml:"description"`
+	Startup     startupFile `yaml:"startup"`
+	Access      accessFile  `yaml:"access"`
 }
 
-type file struct {
+type startupFile struct {
+	Profiles   profileNames `yaml:"profiles"`
+	Files      []string     `yaml:"files"`
+	LocalStore string       `yaml:"local_store"`
+}
+
+type accessFile struct {
+	CentralStore *bool `yaml:"central_store"`
+}
+
+// legacyFile is the 0.2 config: one implicit preset, its settings at the top
+// level. It is read only to migrate it.
+type legacyFile struct {
 	Bootstrap  profileNames `yaml:"bootstrap"`
 	EagerFiles []string     `yaml:"eager_files"`
 }
 
-// profileNames accepts the bootstrap key as either a single name or a list of
-// them. Both shapes stay valid so a `bootstrap: python` written before profiles
-// could compose keeps working untouched, and so the common single-profile case
-// need not be a one-element list.
+// Keys contour recognises, so a typo is reported instead of silently ignored —
+// `file:` would otherwise leave a preset quietly loading nothing.
+var (
+	rootKeys    = []string{"presets"}
+	legacyKeys  = []string{"bootstrap", "eager_files"}
+	presetKeys  = []string{"description", "startup", "access"}
+	startupKeys = []string{"profiles", "files", "local_store"}
+	accessKeys  = []string{"central_store"}
+)
+
+// profileNames accepts a profile list as either a single name or a list of
+// them, so the common single-profile case need not be a one-element list.
 type profileNames []string
 
 func (n *profileNames) UnmarshalYAML(node *yaml.Node) error {
@@ -118,7 +228,7 @@ func (n *profileNames) UnmarshalYAML(node *yaml.Node) error {
 		}
 		*n = many
 	default:
-		return fmt.Errorf("bootstrap must be a profile name or a list of profile names")
+		return fmt.Errorf("profiles must be a profile name or a list of profile names")
 	}
 	return nil
 }
@@ -149,15 +259,26 @@ func cleanNames(names []string) []string {
 // keeps its manifest for reasons of its own, so a bare go.yaml must never be
 // read as a contour config — and adding one to a project must never disturb the
 // .contour.yaml already sitting beside it.
+//
+// A config still in the pre-preset shape — bootstrap and eager_files at the top
+// level — is migrated: its settings become the default preset, and the file is
+// rewritten in the new shape, once, with a warning saying so. If the rewrite
+// fails the config is still used, migrated in memory, so an unwritable file
+// never stops a session.
 func Load(projectDir string) (Config, error) {
 	ownPath := filepath.Join(projectDir, FileName)
-	ownFile, ownFound, err := loadFromOwnFile(ownPath)
+	ownBody, ownFound, err := readOwnFile(ownPath)
 	if err != nil {
 		return Config{}, err
 	}
 
-	hostFile, hostPath, hostFound, warnings := loadFromHosts(projectDir)
+	hostBody, hostPath, hostWrite, hostFound, warnings := loadFromHosts(projectDir)
 
+	var (
+		body  *yaml.Node
+		path  string
+		write func(*yaml.Node) error
+	)
 	switch {
 	case ownFound:
 		// The dedicated file wins, but a host section that will now never be read
@@ -167,23 +288,209 @@ func Load(projectDir string) (Config, error) {
 			warnings = append(warnings, fmt.Sprintf(
 				"%s is in effect, so contour's settings in %s are ignored", ownPath, hostPath))
 		}
-		return configFrom(projectDir, ownFile, ownPath, warnings), nil
+		body, path = ownBody, ownPath
+		write = func(n *yaml.Node) error { return writeOwnFile(ownPath, n) }
 	case hostFound:
-		return configFrom(projectDir, hostFile, hostPath, warnings), nil
+		body, path = hostBody, hostPath
+		write = func(n *yaml.Node) error { return hostWrite(hostPath, n) }
 	default:
 		return Config{Warnings: warnings}, nil
 	}
+
+	presets, legacy, parseWarnings, err := parse(projectDir, body)
+	if err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
+	warnings = append(warnings, parseWarnings...)
+
+	migrated := false
+	if legacy {
+		var msg string
+		migrated, msg = migrate(path, presets, write)
+		warnings = append(warnings, msg)
+	}
+	return Config{Presets: presets, Path: path, Migrated: migrated, Warnings: warnings}, nil
 }
 
-// loadFromHosts returns the first host manifest carrying a contour section.
-func loadFromHosts(projectDir string) (f file, path string, found bool, warnings []string) {
+// migrate rewrites a pre-preset config in the new shape, reporting whether it
+// did and the message to show the user either way.
+func migrate(path string, presets []Preset, write func(*yaml.Node) error) (bool, string) {
+	def := presets[0] // a legacy config migrates to exactly one: the default
+	ids := make([]string, 0, len(def.Files))
+	for _, f := range def.Files {
+		ids = append(ids, f.ID)
+	}
+
+	body, err := bodyNode(def.Profiles, ids)
+	if err == nil {
+		err = write(body)
+	}
+	if err != nil {
+		return false, fmt.Sprintf("%s uses the old config shape and could not be migrated (%v); "+
+			"using its settings as the default preset for now", path, err)
+	}
+	return true, fmt.Sprintf("migrated %s to presets: its bootstrap and eager_files are now the default preset's "+
+		"startup.profiles and startup.files — review the change and commit it", path)
+}
+
+// parse reads a config body: a mapping holding presets, or, in a config written
+// before presets existed, bootstrap and eager_files at the top level. It reports
+// which shape it found.
+func parse(projectDir string, body *yaml.Node) (presets []Preset, legacy bool, warnings []string, err error) {
+	if body == nil || body.Kind == 0 {
+		return nil, false, nil, nil // an empty file
+	}
+	if body.Kind != yaml.MappingNode {
+		return nil, false, nil, errors.New("the config must be a mapping")
+	}
+
+	hasLegacy := false
+	for _, k := range legacyKeys {
+		if mappingValue(body, k) != nil {
+			hasLegacy = true
+		}
+	}
+	presetsNode := mappingValue(body, "presets")
+
+	switch {
+	case hasLegacy && presetsNode != nil:
+		return nil, false, nil, errors.New("it has both presets and the old top-level bootstrap/eager_files; " +
+			"move those into presets.default")
+
+	case hasLegacy:
+		var l legacyFile
+		if err := body.Decode(&l); err != nil {
+			return nil, false, nil, err
+		}
+		return []Preset{{
+			Name:         DefaultPreset,
+			Profiles:     cleanNames(l.Bootstrap),
+			Files:        resolveEagerFiles(projectDir, l.EagerFiles),
+			LocalStore:   LocalAll,
+			CentralStore: true,
+		}}, true, nil, nil
+	}
+
+	warnings = unknownKeys(body, rootKeys, "")
+	if presetsNode == nil {
+		return nil, false, warnings, nil
+	}
+	if presetsNode.Kind != yaml.MappingNode {
+		return nil, false, nil, errors.New("presets must be a mapping of preset names to presets")
+	}
+
+	for i := 0; i+1 < len(presetsNode.Content); i += 2 {
+		name := strings.TrimSpace(presetsNode.Content[i].Value)
+		value := presetsNode.Content[i+1]
+		if name == "" {
+			return nil, false, nil, errors.New("a preset has an empty name")
+		}
+		if value.Kind != yaml.MappingNode {
+			return nil, false, nil, fmt.Errorf("preset %q must be a mapping", name)
+		}
+		w, err := presetKeyWarnings(name, value)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		warnings = append(warnings, w...)
+
+		var p presetFile
+		if err := value.Decode(&p); err != nil {
+			return nil, false, nil, fmt.Errorf("preset %q: %w", name, err)
+		}
+		preset, err := presetFrom(projectDir, name, p)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		presets = append(presets, preset)
+	}
+	return presets, false, warnings, nil
+}
+
+func presetFrom(projectDir, name string, p presetFile) (Preset, error) {
+	local := LocalMode(strings.TrimSpace(p.Startup.LocalStore))
+	switch local {
+	case "":
+		local = LocalAll
+	case LocalAll, LocalSelected:
+	default:
+		return Preset{}, fmt.Errorf("preset %q: startup.local_store must be %q or %q, not %q",
+			name, LocalAll, LocalSelected, p.Startup.LocalStore)
+	}
+
+	central := true
+	if p.Access.CentralStore != nil {
+		central = *p.Access.CentralStore
+	}
+
+	return Preset{
+		Name:         name,
+		Description:  strings.TrimSpace(p.Description),
+		Profiles:     cleanNames(p.Startup.Profiles),
+		Files:        resolveEagerFiles(projectDir, p.Startup.Files),
+		LocalStore:   local,
+		CentralStore: central,
+	}, nil
+}
+
+// presetKeyWarnings reports the keys contour does not recognise in a preset and
+// in its startup and access groups. A group that is present but is not a
+// mapping is an error: its settings would otherwise vanish without a word.
+func presetKeyWarnings(name string, preset *yaml.Node) ([]string, error) {
+	prefix := "preset " + name + ": "
+	warnings := unknownKeys(preset, presetKeys, prefix)
+	for _, group := range []struct {
+		key   string
+		known []string
+	}{{"startup", startupKeys}, {"access", accessKeys}} {
+		node := mappingValue(preset, group.key)
+		switch {
+		case node == nil || (node.Kind == yaml.ScalarNode && node.Tag == "!!null"):
+			// absent, or present and empty: every setting takes its default
+		case node.Kind != yaml.MappingNode:
+			return nil, fmt.Errorf("preset %q: %s must be a mapping", name, group.key)
+		default:
+			warnings = append(warnings, unknownKeys(node, group.known, prefix+group.key+": ")...)
+		}
+	}
+	return warnings, nil
+}
+
+// unknownKeys warns about the keys of a mapping contour does not recognise.
+func unknownKeys(m *yaml.Node, known []string, prefix string) []string {
+	var out []string
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if k := m.Content[i].Value; !slices.Contains(known, k) {
+			out = append(out, fmt.Sprintf("%sunknown key %q, ignored (expected one of: %s)",
+				prefix, k, strings.Join(known, ", ")))
+		}
+	}
+	return out
+}
+
+// mappingValue returns the value node for key in mapping m, or nil.
+func mappingValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// loadFromHosts returns the first host manifest carrying a contour section,
+// with the writer for that host.
+func loadFromHosts(projectDir string) (body *yaml.Node, path string, write func(string, *yaml.Node) error, found bool, warnings []string) {
 	for _, h := range hosts {
 		p := filepath.Join(projectDir, h.Name)
 		if _, err := os.Stat(p); err != nil {
 			continue
 		}
 
-		hf, ok, err := h.read(p)
+		b, ok, err := h.read(p)
 		if err != nil {
 			// The manifest belongs to the project, not to contour. One contour
 			// cannot read degrades to a warning rather than an error: a project
@@ -193,68 +500,98 @@ func loadFromHosts(projectDir string) (f file, path string, found bool, warnings
 			continue
 		}
 		if ok {
-			return hf, p, true, warnings
+			return b, p, h.write, true, warnings
 		}
 	}
-	return file{}, "", false, warnings
+	return nil, "", nil, false, warnings
 }
 
-func configFrom(projectDir string, f file, path string, warnings []string) Config {
-	return Config{
-		Bootstrap:  cleanNames(f.Bootstrap),
-		EagerFiles: resolveEagerFiles(projectDir, f.EagerFiles),
-		Path:       path,
-		Warnings:   warnings,
-	}
-}
-
-// loadFromOwnFile reads .contour.yaml, reporting whether it exists.
-func loadFromOwnFile(path string) (file, bool, error) {
+// readOwnFile reads .contour.yaml as a node, reporting whether it exists.
+func readOwnFile(path string) (*yaml.Node, bool, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return file{}, false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return file{}, false, fmt.Errorf("read %s: %w", path, err)
+		return nil, false, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	var f file
-	if err := yaml.Unmarshal(data, &f); err != nil {
-		return file{}, false, fmt.Errorf("parse %s: %w", path, err)
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, false, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return f, true, nil
+	if len(doc.Content) == 0 {
+		return &yaml.Node{}, true, nil // an empty file
+	}
+	return doc.Content[0], true, nil
+}
+
+// writeOwnFile writes .contour.yaml: the file header, then the body.
+func writeOwnFile(path string, body *yaml.Node) error {
+	var buf strings.Builder
+	buf.WriteString(ownFileHeader)
+	// Two-space indentation, as the template is written; yaml.Marshal would
+	// re-indent it to four.
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(body); err != nil {
+		return fmt.Errorf("render %s: %w", path, err)
+	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("render %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(buf.String()), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // readGoYAML reads external.contour from a go.yaml, reporting whether that
 // section is present.
-func readGoYAML(path string) (f file, found bool, err error) {
+func readGoYAML(path string) (*yaml.Node, bool, error) {
 	doc, err := godotyaml.Load(path)
 	if err != nil {
-		return file{}, false, err
+		return nil, false, err
 	}
-	found, err = doc.DecodeExternalConfig(ExternalKey, &f)
-	if err != nil {
-		return file{}, false, err
-	}
-	return f, found, nil
+	node, found := doc.GetRawExternalConfig(ExternalKey)
+	return node, found, nil
 }
 
-// ErrProfileConflict reports that a project already has a config and it selects
-// different profiles from the ones asked for. Ensure returns it alongside the
-// existing config, having written nothing.
+// writeGoYAML sets external.contour in an existing go.yaml, leaving the other
+// sections of the document — its metadata and any other tool's settings — as
+// they were.
+func writeGoYAML(path string, body *yaml.Node) error {
+	doc, err := godotyaml.Load(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := doc.SetExternalConfig(ExternalKey, body); err != nil {
+		return fmt.Errorf("set external.%s in %s: %w", ExternalKey, path, err)
+	}
+	if err := doc.Save(path); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// ErrProfileConflict reports that a project already has a config and its
+// default preset selects different profiles from the ones asked for. Ensure
+// returns it alongside the existing config, having written nothing.
 var ErrProfileConflict = errors.New("the project config already exists and selects different profiles")
 
 // Ensure gives a project a config if it has none, returning the config in
-// effect and whether this call created it.
+// effect and whether this call created it. A new config holds one preset,
+// default, with the given profiles and eager files.
 //
 // An existing config is never modified. It is the team's committed setup, while
 // the command that calls this — registering contour on a machine — is run once
 // per developer, on every machine. Rewriting the config there would let anyone's
-// routine setup silently replace the team's profiles and eager files. A
-// deliberate change to shared settings should be a deliberate edit to the file,
-// where it shows up in review.
+// routine setup silently replace the team's presets. A deliberate change to
+// shared settings should be a deliberate edit to the file, where it shows up in
+// review. (Loading an old-shape config migrates it, as any command would; that
+// changes its form, not its settings.)
 //
-// Asking for exactly the profiles the existing config already selects is not a
+// Asking for exactly the profiles the default preset already selects is not a
 // conflict, so re-running the same setup command is harmless. Asking for
 // different ones returns ErrProfileConflict and writes nothing: quietly ignoring
 // an explicit request would be as wrong as quietly honouring it.
@@ -267,7 +604,8 @@ func Ensure(projectDir string, bootstrap, eagerFiles []string) (Config, bool, er
 	}
 
 	if cfg.Path != "" {
-		if requested := cleanNames(bootstrap); len(requested) > 0 && !slices.Equal(requested, cfg.Bootstrap) {
+		def, _ := cfg.Preset(DefaultPreset)
+		if requested := cleanNames(bootstrap); len(requested) > 0 && !slices.Equal(requested, def.Profiles) {
 			return cfg, false, ErrProfileConflict
 		}
 		return cfg, false, nil
@@ -285,9 +623,10 @@ func Ensure(projectDir string, bootstrap, eagerFiles []string) (Config, bool, er
 	return cfg, true, nil
 }
 
-// Write records the bootstrap profiles and eager files for a project, returning
-// the path written. It replaces whatever config the project had; Ensure is the
-// way to set up a project without that risk.
+// Write records a project config holding one preset, default, with the given
+// profiles and eager files, returning the path written. It replaces whatever
+// config the project had; Ensure is the way to set up a project without that
+// risk.
 //
 // A project that already keeps a host manifest gets contour's settings in that
 // file rather than a second config file. One that does not gets a .contour.yaml.
@@ -297,107 +636,120 @@ func Ensure(projectDir string, bootstrap, eagerFiles []string) (Config, bool, er
 // read: writing to a host manifest while one sits beside it would file the
 // settings somewhere permanently shadowed.
 func Write(projectDir string, bootstrap []string, eagerFiles []string) (string, error) {
-	ownPath := filepath.Join(projectDir, FileName)
+	body, err := bodyNode(bootstrap, eagerFiles)
+	if err != nil {
+		return "", err
+	}
 
+	ownPath := filepath.Join(projectDir, FileName)
 	if _, err := os.Stat(ownPath); err != nil {
 		for _, h := range hosts {
 			p := filepath.Join(projectDir, h.Name)
 			if _, err := os.Stat(p); err != nil {
 				continue
 			}
-			return p, h.write(p, bootstrap, eagerFiles)
+			return p, h.write(p, body)
 		}
 	}
 
-	if err := os.WriteFile(ownPath, render(bootstrap, eagerFiles), 0o644); err != nil {
-		return "", fmt.Errorf("write %s: %w", ownPath, err)
+	if err := writeOwnFile(ownPath, body); err != nil {
+		return "", err
 	}
 	return ownPath, nil
 }
 
-// writeGoYAML sets external.contour in an existing go.yaml, leaving the rest of
-// the document — including its comments, key order and any other tool's section
-// — exactly as it was.
-func writeGoYAML(path string, bootstrap, eagerFiles []string) error {
-	doc, err := godotyaml.Load(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+// bodyNode renders the config body and parses it into a node. The body is
+// written once, as commented YAML text, and parsed rather than assembled node by
+// node, so .contour.yaml and a host manifest's section share one template and
+// document their fields identically.
+func bodyNode(bootstrap, eagerFiles []string) (*yaml.Node, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(renderBody(bootstrap, eagerFiles)), &doc); err != nil {
+		return nil, fmt.Errorf("render the project config: %w", err)
 	}
-	if err := doc.SetExternalConfig(ExternalKey, externalNode(bootstrap, eagerFiles)); err != nil {
-		return fmt.Errorf("set external.%s in %s: %w", ExternalKey, path, err)
-	}
-	if err := doc.Save(path); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
+	return doc.Content[0], nil
 }
 
-// externalNode builds the external.contour mapping with its documentation
-// attached as comments, so the section explains itself in go.yaml just as
-// .contour.yaml does. It is passed as a node rather than a plain struct
-// precisely because a struct would marshal without the comments.
-func externalNode(bootstrap, eagerFiles []string) *yaml.Node {
-	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-
-	bootstrapKey := scalar("bootstrap")
-	bootstrapKey.HeadComment = "the central store profiles whose rules load eagerly here.\n" +
-		"List more than one to combine entry points — [python, cli] for a Python\n" +
-		"project that also ships a CLI. They compose in order, and an item both\n" +
-		"profiles select is loaded once. A bare name works too: bootstrap: python\n" +
-		"The --bootstrap flag to `contour mcp` overrides this."
-	names := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
-	for _, name := range cleanNames(bootstrap) {
-		names.Content = append(names.Content, scalar(name))
-	}
-
-	eagerKey := scalar("eager_files")
-	eagerKey.HeadComment = "files loaded eagerly as project rules, paths relative to the project\n" +
-		"root. Keep a CLAUDE.md or AGENTS.md without moving it into rules/."
-	files := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-	if len(eagerFiles) == 0 {
-		files.Style = yaml.FlowStyle
-	}
-	for _, f := range eagerFiles {
-		files.Content = append(files.Content, scalar(f))
-	}
-
-	node.Content = append(node.Content, bootstrapKey, names, eagerKey, files)
-	return node
-}
-
-func scalar(value string) *yaml.Node {
-	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
-}
-
-func render(bootstrap []string, eagerFiles []string) []byte {
+// renderBody renders a config holding a single default preset.
+//
+// Settings left at their defaults are written commented out, with their values
+// explained: a generated config should teach every field it can hold, and
+// leaving them commented keeps the defaults in force until someone decides
+// otherwise. The whole access group is commented out, since everything in it
+// is a default — an access key holding nothing but comments is the shape most
+// likely to lose them on a rewrite. The example of a second preset sits in the
+// comment above presets for the same reason: yaml.v3 drops a comment trailing
+// the end of the document, so placed there it would vanish from go.yaml.
+func renderBody(profiles, files []string) string {
 	var b strings.Builder
 
-	b.WriteString("# contour project config\n")
-	b.WriteString("#\n")
-	b.WriteString("# Per-project settings, at the project root so they are independent of which\n")
-	b.WriteString("# overlay folder (.contour/, .agents/ or .claude/) holds your local rules —\n")
-	b.WriteString("# move those between folders freely without losing this. Commit it so your\n")
-	b.WriteString("# team shares the setup.\n")
-	b.WriteString("\n")
-	b.WriteString("# bootstrap: the central store profiles whose rules load eagerly here.\n")
-	b.WriteString("#   List more than one to combine entry points — [python, cli] for a Python\n")
-	b.WriteString("#   project that also ships a CLI. They compose in order, and an item both\n")
-	b.WriteString("#   profiles select is loaded once. A bare name works too: bootstrap: python\n")
-	b.WriteString("#   The --bootstrap flag to `contour mcp` overrides this.\n")
-	fmt.Fprintf(&b, "bootstrap: [%s]\n", strings.Join(cleanNames(bootstrap), ", "))
-	b.WriteString("\n")
-	b.WriteString("# eager_files: files loaded eagerly as project rules, paths relative to the\n")
-	b.WriteString("#   project root. Keep a CLAUDE.md or AGENTS.md without moving it into rules/.\n")
-	if len(eagerFiles) == 0 {
-		b.WriteString("eager_files: []\n")
+	b.WriteString(`# presets: named starting points for an agent session in this project. Each
+#   one says what a session starts with (startup) and what it may reach at all
+#   (access). "default" is loaded when a session starts; ask the agent to load
+#   any other, or start with it by passing --preset <name> to "contour mcp".
+#   A preset inherits nothing from default: each lists everything it needs.
+#
+#   In a project with several unrelated parts — a monorepo, say — keep default
+#   light: it is always loaded, so give it only what every session needs, and
+#   put each part in a preset of its own. A second preset looks like this:
+#
+#     frontend:
+#       description: The React app (shown when the agent lists the presets)
+#       startup:
+#         profiles: [react]
+#         files: [frontend/AGENTS.md]
+presets:
+  default:
+    # startup: what a session with this preset starts with.
+    startup:
+      # profiles: whose rules load eagerly, and whose skills and knowledge are
+      #   listed for the agent to fetch. List several to combine them —
+      #   [python, cli] — in the order they compose. Looked up in this project
+      #   first, then your central store.
+`)
+	fmt.Fprintf(&b, "      profiles: [%s]\n", strings.Join(cleanNames(profiles), ", "))
+	// local_store is documented above files, as part of files' head comment,
+	// not after it: yaml.v3 attaches a comment that follows a block list to
+	// the list's last item and re-indents it to match, so placed after a
+	// non-empty files list it would land inside the list.
+	b.WriteString(`      # local_store: which of this project's own items (in .agents/, .contour/
+      #   or .claude/) the session starts with. Whichever you pick, all of them
+      #   stay reachable through the list, search and get tools.
+      #     all        every one; local rules load eagerly (the default)
+      #     selected   only those the profiles above select by tag
+      # local_store: all
+      #
+      # files: project files loaded eagerly as rules, paths relative to the
+      #   project root. Keep a CLAUDE.md or AGENTS.md without restructuring it.
+`)
+	if len(files) == 0 {
+		b.WriteString("      files: []\n")
 	} else {
-		b.WriteString("eager_files:\n")
-		for _, f := range eagerFiles {
-			fmt.Fprintf(&b, "  - %s\n", f)
+		b.WriteString("      files:\n")
+		for _, f := range files {
+			fmt.Fprintf(&b, "        - %s\n", f)
 		}
 	}
-	return []byte(b.String())
+	b.WriteString(`    # access: what a session with this preset may reach at all.
+    #   central_store: whether it uses your central store.
+    #     true       yes (the default)
+    #     false      this project's local store only: none of your central
+    #                store reaches the session, which keeps a developer's
+    #                personal store out of it
+    # access:
+    #   central_store: true
+`)
+	return b.String()
 }
+
+const ownFileHeader = `# contour project config
+#
+# Per-project settings, at the project root so they are independent of which
+# overlay folder (.contour/, .agents/ or .claude/) holds your local rules —
+# move those between folders freely without losing this. Commit it so your
+# team shares the setup.
+
+`
 
 // resolveEagerFiles turns listed paths (relative to the project root) into
 // EagerFiles: the listed path is the ID, the absolute path is what to read.

@@ -127,3 +127,28 @@ func TestDiscoverOverlays(t *testing.T) {
 		t.Errorf("order = %v, want [.contour .claude]", got)
 	}
 }
+
+// An empty central root leaves the central store out. It must not be read as a
+// relative path: from a project directory, "" joined to "rules" is the
+// project's own rules/ folder, which would be passed off as central items.
+func TestLoadProjectWithoutTheCentralStore(t *testing.T) {
+	project := t.TempDir()
+	write(t, project, "rules/decoy.md", "a project file, not a central rule")
+	overlay := filepath.Join(project, ".agents")
+	write(t, overlay, "rules/local.md", "local body")
+	t.Chdir(project)
+
+	st, err := LoadProject("", []string{overlay}, nil)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	if _, ok := st.Get("rules/decoy"); ok {
+		t.Error("the working directory's rules/ was read as the central store")
+	}
+	if len(st.BySource(KindRules, OriginStore)) != 0 {
+		t.Error("central items loaded though the central store was left out")
+	}
+	if _, ok := st.Get("rules/local"); !ok {
+		t.Error("the project's own items were not loaded")
+	}
+}

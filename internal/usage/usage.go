@@ -33,11 +33,12 @@ import (
 const surfaceMCP = "mcp"
 
 // Event is one logged usage record. The Logger fills the ambient fields (time,
-// surface, project, profile); callers supply only the event-specific ones.
+// surface, project, preset, profile); callers supply only the event-specific ones.
 type Event struct {
 	Time    string `json:"ts"`
 	Surface string `json:"surface"`
 	Project string `json:"project"`
+	Preset  string `json:"preset,omitempty"`
 	Profile string `json:"profile,omitempty"`
 	Type    string `json:"event"`
 	ID      string `json:"id,omitempty"`
@@ -56,16 +57,17 @@ type Logger struct {
 	mu      sync.Mutex
 	file    *os.File
 	project string
+	preset  string
 	profile string
 }
 
-// Open starts a session log for a session's bootstrap profiles. The project is
-// the working directory the process was started in — the project the client
-// spawned contour for.
+// Open starts a session log for a session's preset and the bootstrap profiles it
+// loaded. The project is the working directory the process was started in — the
+// project the client spawned contour for.
 //
 // Several profiles are recorded as one comma-separated value rather than a JSON
 // list, so a log written before profiles could compose still parses.
-func Open(profiles []string) (*Logger, error) {
+func Open(preset string, profiles []string) (*Logger, error) {
 	profile := strings.Join(profiles, ",")
 
 	project, err := projectDir()
@@ -90,7 +92,7 @@ func Open(profiles []string) (*Logger, error) {
 		return nil, fmt.Errorf("open session log: %w", err)
 	}
 
-	l := &Logger{file: f, project: project, profile: profile}
+	l := &Logger{file: f, project: project, preset: preset, profile: profile}
 	l.record(Event{Type: "session_start"})
 	return l, nil
 }
@@ -120,14 +122,16 @@ func (l *Logger) Search(query, kind string, results int) {
 	l.record(Event{Type: "search", Query: query, Kind: kind, Results: &results})
 }
 
-// Bootstrap records that the agent loaded the full session payload. It is the
-// signal for whether an agent acts on an incomplete-instructions notice, which
-// is the only way to tell a truncated session from a well-behaved one.
-func (l *Logger) Bootstrap() {
+// Bootstrap records that the agent loaded a preset's payload: the session's
+// own, or another it asked for by name. It is the signal for whether agents
+// act on an incomplete-instructions notice, and for which presets earn their
+// keep — the event carries the preset loaded, while session_start carries the
+// one the session began with.
+func (l *Logger) Bootstrap(preset string) {
 	if l == nil {
 		return
 	}
-	l.record(Event{Type: "bootstrap"})
+	l.record(Event{Type: "bootstrap", Preset: preset})
 }
 
 // List records a list, optionally filtered by kind.
@@ -145,6 +149,9 @@ func (l *Logger) record(e Event) {
 	e.Time = time.Now().UTC().Format(time.RFC3339)
 	e.Surface = surfaceMCP
 	e.Project = l.project
+	if e.Preset == "" {
+		e.Preset = l.preset
+	}
 	e.Profile = l.profile
 
 	line, err := json.Marshal(e)

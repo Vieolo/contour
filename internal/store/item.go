@@ -48,6 +48,12 @@ type Item struct {
 	// Body is the item's content with the frontmatter removed and surrounding
 	// whitespace trimmed.
 	Body string
+
+	// Pinned marks a rule loaded from a file the project config lists by name
+	// (a preset's startup.files). Naming a file is a request to load it, so it is delivered
+	// whatever any tag selection says — it carries no folder tags to be
+	// selected by in the first place.
+	Pinned bool
 }
 
 // LineMatch is a single body line that contains the search query.
